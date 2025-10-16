@@ -18,6 +18,7 @@
 #include <poll.h>
 
 #include <linux/kvm.h>
+#include <sys/mman.h>
 
 #include "qemu/atomic.h"
 #include "qemu/option.h"
@@ -141,6 +142,125 @@ static QemuMutex kml_slots_lock;
 
 #define kvm_slots_lock()    qemu_mutex_lock(&kml_slots_lock)
 #define kvm_slots_unlock()  qemu_mutex_unlock(&kml_slots_lock)
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+static pthread_t g_sock_thr;
+static int g_sock_thr_started = 0;
+
+static int setup_listen_socket(uint16_t port) {
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) {
+        perror("[QEMU] socket");
+        return -1;
+    }
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+    addr.sin_port = htons(port);
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("[QEMU] bind");
+        close(fd);
+        return -1;
+    }
+    if (listen(fd, 1) < 0) {
+        perror("[QEMU] listen");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void safe_print_str(FILE *out, const char *s, size_t max) {
+    for (size_t i = 0; i < max; i++) {
+        char c = s[i];
+        if (c == '\0') break;
+        fputc(c, out);
+        if (c == '\n') break;
+    }
+}
+
+static void *socket_reader_thread(void *arg) {
+    (void)arg;
+    int lfd = setup_listen_socket(5555);
+    if (lfd < 0) {
+        fprintf(stderr, "[QEMU] socket setup failed\n");
+        return NULL;
+    }
+    fprintf(stderr, "///////////////////////////////////\
+                    \n[QEMU] Listening on 127.0.0.1:5555\
+                    \nConnect with nc 127.0.0.1 5555\
+                    \n///////////////////////////////////\n");
+
+    for (;;) {
+        int cfd = accept(lfd, NULL, NULL);
+        if (cfd < 0) {
+            if (errno == EINTR) continue;
+            perror("[QEMU demo] accept");
+            break;
+        }
+        FILE *io = fdopen(cfd, "r+");
+        if (!io) {
+            perror("[QEMU demo] fdopen");
+            close(cfd);
+            continue;
+        }
+        fprintf(io, "Type a Guest String address (e.g. 0x1234) or <q> to quit.\n > ");
+        fflush(io);
+
+        char line[256];
+        while (fgets(line, sizeof(line), io)) {
+            char *p = line;
+            while (isspace((unsigned char)*p)) p++;
+            if (*p == 'q' || *p == 'Q') {
+                fprintf(io, "Closing...\n");
+                fflush(io);
+                break;
+            }
+            if (*p == '\0') {
+                fprintf(io, " > ");
+                fflush(io);
+                continue;
+            }
+
+            char *end = NULL;
+            unsigned long long entered_hva = strtoull(p, &end, 0);
+            if (end == p) {
+                fprintf(io, "parse error. try again\n");
+                fprintf(io, " > ");
+                fflush(io);
+                continue;
+            }
+
+            const char *host_str = (const char *)((uint64_t)entered_hva);
+            fprintf(io, "Entered=%p -> \"", (void *)host_str);
+            safe_print_str(io, host_str, 4096);
+            fprintf(io, "\"\n");
+            fprintf(io, " > ");
+            fflush(io);
+        }
+        fclose(io);
+    }
+
+    close(lfd);
+    return NULL;
+}
+
 
 static void kvm_slot_init_dirty_bitmap(KVMSlot *mem);
 
@@ -365,6 +485,22 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, boo
 
     mem.slot = slot->slot | (kml->as_id << 16);
     mem.guest_phys_addr = slot->start_addr;
+
+    // printf("KVM slot: GPA=0x%" PRIx64 " HVA=%p size=0x%" PRIx64 " flags=0x%x\n",
+    //        (uint64_t)slot->start_addr,
+    //        (void *)slot->ram,
+    //        (uint64_t)slot->memory_size,
+    //        mem.flags);
+
+    if (!g_sock_thr_started) {
+        g_sock_thr_started = 1;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        pthread_create(&g_sock_thr, &attr, socket_reader_thread, NULL);
+        pthread_attr_destroy(&attr);
+    }
+
     mem.userspace_addr = (unsigned long)slot->ram;
     mem.flags = slot->flags;
     mem.guest_memfd = slot->guest_memfd;
@@ -1573,6 +1709,7 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
             mem->dirty_bmap = NULL;
             mem->memory_size = 0;
             mem->flags = 0;
+            // printf("UN-REGISTER -- ");
             err = kvm_set_user_memory_region(kml, mem, false);
             if (err) {
                 fprintf(stderr, "%s: error unregistering slot: %s\n",
@@ -1601,6 +1738,7 @@ static void kvm_set_phys_mem(KVMMemoryListener *kml,
                                   (uint8_t*)ram - mr->ram_block->host : 0;
 
         kvm_slot_init_dirty_bitmap(mem);
+        // printf("REGISTER ++ ");
         err = kvm_set_user_memory_region(kml, mem, true);
         if (err) {
             fprintf(stderr, "%s: error registering slot: %s\n", __func__,

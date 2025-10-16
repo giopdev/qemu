@@ -30,6 +30,11 @@
 #include <linux/magic.h>
 #endif
 
+static const size_t LOW_OFFSET_INTO_MEMORY = 0x100000ULL;           // 1MB
+static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
+static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
+static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
+
 QemuFsType qemu_fd_getfs(int fd)
 {
 #ifdef CONFIG_LINUX
@@ -184,6 +189,9 @@ static void *mmap_reserve(size_t size, int fd)
 static void *mmap_activate(void *ptr, size_t size, int fd,
                            uint32_t qemu_map_flags, off_t map_offset)
 {
+    // if(fd != -1)
+    //     printf("mmap_activate()  --  fd for call with size %lx = %d\n", size, fd);
+
     const bool noreserve = qemu_map_flags & QEMU_MAP_NORESERVE;
     const bool readonly = qemu_map_flags & QEMU_MAP_READONLY;
     const bool shared = qemu_map_flags & QEMU_MAP_SHARED;
@@ -231,6 +239,36 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
          */
         activated_ptr = mmap(ptr, size, prot, flags, fd, map_offset);
     }
+
+    // Heuristic, we're always assuming fd = 11 for ram
+    if(fd == 11){
+        if(qemu_map_flags & QEMU_MAP_SHARED){
+            // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
+            if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
+                size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
+                off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
+                void *want = (void *)VIRTUAL_ADDRESS_LOW;
+
+                void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+                if (lowShadow == MAP_FAILED){
+                    perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
+                }
+            }
+
+            // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
+            if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
+                size_t length = size - HIGH_OFFSET_INTO_MEMORY;
+                off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
+                void *want = (void *)VIRTUAL_ADDRESS_HIGH;
+
+                void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+                if(highShadow == MAP_FAILED){
+                    perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
+                }
+            }
+        }
+    }
+
     return activated_ptr;
 }
 
