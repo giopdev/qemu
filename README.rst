@@ -62,8 +62,8 @@ Create sym-link
 ========
 After building, we need to create a sym-link so gramine can see our qemu binary
 
+Run this command inside the build/ directory
 .. code-block:: shell
-  # Inside build/
   sudo ln -s $(pwd)/qemu-system-x86_64 /usr/bin/qemu
 
 Additional information can also be found online via the QEMU website:
