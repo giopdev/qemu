@@ -57,10 +57,14 @@ of other UNIX targets. The simple steps to build QEMU are:
   ../configure --disable-werror
   make -j$(nproc) qemu-system-x86_64
 
-```
+
+Create sym-link
+========
+After building, we need to create a sym-link so gramine can see our qemu binary
+
+.. code-block:: shell
   # Inside build/
   sudo ln -s $(pwd)/qemu-system-x86_64 /usr/bin/qemu
-```
 
 Additional information can also be found online via the QEMU website:
 
