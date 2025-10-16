@@ -49,7 +49,6 @@ QEMU is multi-platform software intended to be buildable on all modern
 Linux platforms, OS-X, Win32 (via the Mingw64 toolchain) and a variety
 of other UNIX targets. The simple steps to build QEMU are:
 
-
 .. code-block:: shell
 
   mkdir build
@@ -57,6 +56,9 @@ of other UNIX targets. The simple steps to build QEMU are:
   ../configure --disable-werror
   make -j$(nproc) qemu-system-x86_64
 
+It is possible (especially after a system update) that this step may
+need to be repeated to properly set dependencies. If this occurs simply
+remove the entire build directory and repeat the build steps above.
 
 Create sym-link
 ========
