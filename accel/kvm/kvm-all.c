@@ -13,6 +13,8 @@
  *
  */
 
+#define ENABLE_LISTENER_FOR_TEST_CASE
+
 #include "qemu/osdep.h"
 #include <sys/ioctl.h>
 #include <poll.h>
@@ -143,6 +145,9 @@ static QemuMutex kml_slots_lock;
 #define kvm_slots_lock()    qemu_mutex_lock(&kml_slots_lock)
 #define kvm_slots_unlock()  qemu_mutex_unlock(&kml_slots_lock)
 
+
+
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -157,6 +162,8 @@ static QemuMutex kml_slots_lock;
 
 static pthread_t g_sock_thr;
 static int g_sock_thr_started = 0;
+static const uint64_t SET_VALUE = 0xDEADBEEFDEADBEEFULL;
+const int PTRS_ARRAY_SIZE = 128;
 
 static int setup_listen_socket(uint16_t port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -195,6 +202,45 @@ static void safe_print_str(FILE *out, const char *s, size_t max) {
     }
 }
 
+static void verify_all(FILE *io, uint64_t ptrs_base) {
+  uint64_t *ptrs = (uint64_t *)ptrs_base;
+
+  int ok = 0, total = 0;
+  for (int i = 0; i < PTRS_ARRAY_SIZE; i++) {
+    uint64_t p = ptrs[i];
+    if (p == 0) {
+      fprintf(io, "[%2d] ptr=NULL, skipping\n", i);
+      continue;
+    }
+
+    size_t current_size = (i < 2) ? PAGE_SIZE : (size_t)i * PAGE_SIZE;
+    uint64_t *start = (uint64_t *)p;
+    uint64_t *end = (uint64_t *)(p + current_size - sizeof(uint64_t));
+
+    uint64_t s = *start;
+    uint64_t e = *end;
+
+    int s_ok = (s == SET_VALUE);
+    int e_ok = (e == SET_VALUE);
+
+    if (s_ok && e_ok) {
+      fprintf(io, "[%2d] start=%p end=%p size=%zu | OK\n",
+              i, (void *)start, (void *)end, current_size);
+      ok++;
+    } else {
+      fprintf(io, "[%2d] start=%p end=%p size=%zu | "
+                  "start=0x%016" PRIx64 " %s, end=0x%016" PRIx64 " %s\n",
+              i, (void *)start, (void *)end, current_size,
+              s, s_ok ? "OK" : "MISMATCH",
+              e, e_ok ? "OK" : "MISMATCH");
+    }
+    total++;
+  }
+
+  fprintf(io, "Summary: %d/%d blocks OK\n", ok, total);
+  fflush(io);
+}
+
 static void *socket_reader_thread(void *arg) {
     (void)arg;
     int lfd = setup_listen_socket(5555);
@@ -220,7 +266,7 @@ static void *socket_reader_thread(void *arg) {
             close(cfd);
             continue;
         }
-        fprintf(io, "Type a Guest String address (e.g. 0x1234) or <q> to quit.\n > ");
+        fprintf(io, "Type address of guest &ptrs[0] (e.g. 0x1234) or <q> to quit.\n > ");
         fflush(io);
 
         char line[256];
@@ -247,10 +293,10 @@ static void *socket_reader_thread(void *arg) {
                 continue;
             }
 
-            const char *host_str = (const char *)((uint64_t)entered_hva);
-            fprintf(io, "Entered=%p -> \"", (void *)host_str);
-            safe_print_str(io, host_str, 4096);
-            fprintf(io, "\"\n");
+            fprintf(io, "Entered=%p\n", (void *)entered_hva);
+            // safe_print_str(io, host_str, 4096);
+            // fprintf(io, "\"\n");
+            verify_all(io, entered_hva);
             fprintf(io, " > ");
             fflush(io);
         }
@@ -492,6 +538,7 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, boo
     //        (uint64_t)slot->memory_size,
     //        mem.flags);
 
+    #ifdef ENABLE_LISTENER_FOR_TEST_CASE
     if (!g_sock_thr_started) {
         g_sock_thr_started = 1;
         pthread_attr_t attr;
@@ -500,6 +547,7 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, boo
         pthread_create(&g_sock_thr, &attr, socket_reader_thread, NULL);
         pthread_attr_destroy(&attr);
     }
+    #endif
 
     mem.userspace_addr = (unsigned long)slot->ram;
     mem.flags = slot->flags;
