@@ -148,169 +148,169 @@ static QemuMutex kml_slots_lock;
 
 
 
-#include <pthread.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <inttypes.h>
-#include <ctype.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-
-static pthread_t g_sock_thr;
-static int g_sock_thr_started = 0;
-static const uint64_t SET_VALUE = 0xDEADBEEFDEADBEEFULL;
-const int PTRS_ARRAY_SIZE = 128;
-
-static int setup_listen_socket(uint16_t port) {
-    int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) {
-        perror("[QEMU] socket");
-        return -1;
-    }
-    int on = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
-    addr.sin_port = htons(port);
-
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("[QEMU] bind");
-        close(fd);
-        return -1;
-    }
-    if (listen(fd, 1) < 0) {
-        perror("[QEMU] listen");
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-static void safe_print_str(FILE *out, const char *s, size_t max) {
-    for (size_t i = 0; i < max; i++) {
-        char c = s[i];
-        if (c == '\0') break;
-        fputc(c, out);
-        if (c == '\n') break;
-    }
-}
-
-static void verify_all(FILE *io, uint64_t ptrs_base) {
-  uint64_t *ptrs = (uint64_t *)ptrs_base;
-
-  int ok = 0, total = 0;
-  for (int i = 0; i < PTRS_ARRAY_SIZE; i++) {
-    uint64_t p = ptrs[i];
-    if (p == 0) {
-      fprintf(io, "[%2d] ptr=NULL, skipping\n", i);
-      continue;
-    }
-
-    size_t current_size = (i < 2) ? PAGE_SIZE : (size_t)i * PAGE_SIZE;
-    uint64_t *start = (uint64_t *)p;
-    uint64_t *end = (uint64_t *)(p + current_size - sizeof(uint64_t));
-
-    uint64_t s = *start;
-    uint64_t e = *end;
-
-    int s_ok = (s == SET_VALUE);
-    int e_ok = (e == SET_VALUE);
-
-    if (s_ok && e_ok) {
-      fprintf(io, "[%2d] start=%p end=%p size=%zu | OK\n",
-              i, (void *)start, (void *)end, current_size);
-      ok++;
-    } else {
-      fprintf(io, "[%2d] start=%p end=%p size=%zu | "
-                  "start=0x%016" PRIx64 " %s, end=0x%016" PRIx64 " %s\n",
-              i, (void *)start, (void *)end, current_size,
-              s, s_ok ? "OK" : "MISMATCH",
-              e, e_ok ? "OK" : "MISMATCH");
-    }
-    total++;
-  }
-
-  fprintf(io, "Summary: %d/%d blocks OK\n", ok, total);
-  fflush(io);
-}
-
-static void *socket_reader_thread(void *arg) {
-    (void)arg;
-    int lfd = setup_listen_socket(5555);
-    if (lfd < 0) {
-        fprintf(stderr, "[QEMU] socket setup failed\n");
-        return NULL;
-    }
-    fprintf(stderr, "///////////////////////////////////\
-                    \n[QEMU] Listening on 127.0.0.1:5555\
-                    \nConnect with nc 127.0.0.1 5555\
-                    \n///////////////////////////////////\n");
-
-    for (;;) {
-        int cfd = accept(lfd, NULL, NULL);
-        if (cfd < 0) {
-            if (errno == EINTR) continue;
-            perror("[QEMU demo] accept");
-            break;
-        }
-        FILE *io = fdopen(cfd, "r+");
-        if (!io) {
-            perror("[QEMU demo] fdopen");
-            close(cfd);
-            continue;
-        }
-        fprintf(io, "Type address of guest &ptrs[0] (e.g. 0x1234) or <q> to quit.\n > ");
-        fflush(io);
-
-        char line[256];
-        while (fgets(line, sizeof(line), io)) {
-            char *p = line;
-            while (isspace((unsigned char)*p)) p++;
-            if (*p == 'q' || *p == 'Q') {
-                fprintf(io, "Closing...\n");
-                fflush(io);
-                break;
-            }
-            if (*p == '\0') {
-                fprintf(io, " > ");
-                fflush(io);
-                continue;
-            }
-
-            char *end = NULL;
-            unsigned long long entered_hva = strtoull(p, &end, 0);
-            if (end == p) {
-                fprintf(io, "parse error. try again\n");
-                fprintf(io, " > ");
-                fflush(io);
-                continue;
-            }
-
-            fprintf(io, "Entered=%p\n", (void *)entered_hva);
-            // safe_print_str(io, host_str, 4096);
-            // fprintf(io, "\"\n");
-            verify_all(io, entered_hva);
-            fprintf(io, " > ");
-            fflush(io);
-        }
-        fclose(io);
-    }
-
-    close(lfd);
-    return NULL;
-}
-
-/*
- * ----------------------------------------------------------------------------------------------------------
- * ----------------------------------------------------------------------------------------------------------
- */
+// #include <pthread.h>
+// #include <stdio.h>
+// #include <stdint.h>
+// #include <inttypes.h>
+// #include <ctype.h>
+// #include <unistd.h>
+// #include <string.h>
+// #include <errno.h>
+// #include <arpa/inet.h>
+// #include <netinet/in.h>
+// #include <sys/socket.h>
+// 
+// static pthread_t g_sock_thr;
+// static int g_sock_thr_started = 0;
+// static const uint64_t SET_VALUE = 0xDEADBEEFDEADBEEFULL;
+// const int PTRS_ARRAY_SIZE = 128;
+// 
+// static int setup_listen_socket(uint16_t port) {
+//     int fd = socket(AF_INET, SOCK_STREAM, 0);
+//     if (fd < 0) {
+//         perror("[QEMU] socket");
+//         return -1;
+//     }
+//     int on = 1;
+//     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+// 
+//     struct sockaddr_in addr;
+//     memset(&addr, 0, sizeof(addr));
+//     addr.sin_family = AF_INET;
+//     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1
+//     addr.sin_port = htons(port);
+// 
+//     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+//         perror("[QEMU] bind");
+//         close(fd);
+//         return -1;
+//     }
+//     if (listen(fd, 1) < 0) {
+//         perror("[QEMU] listen");
+//         close(fd);
+//         return -1;
+//     }
+//     return fd;
+// }
+// 
+// static void safe_print_str(FILE *out, const char *s, size_t max) {
+//     for (size_t i = 0; i < max; i++) {
+//         char c = s[i];
+//         if (c == '\0') break;
+//         fputc(c, out);
+//         if (c == '\n') break;
+//     }
+// }
+// 
+// static void verify_all(FILE *io, uint64_t ptrs_base) {
+//   uint64_t *ptrs = (uint64_t *)ptrs_base;
+// 
+//   int ok = 0, total = 0;
+//   for (int i = 0; i < PTRS_ARRAY_SIZE; i++) {
+//     uint64_t p = ptrs[i];
+//     if (p == 0) {
+//       fprintf(io, "[%2d] ptr=NULL, skipping\n", i);
+//       continue;
+//     }
+// 
+//     size_t current_size = (i < 2) ? PAGE_SIZE : (size_t)i * PAGE_SIZE;
+//     uint64_t *start = (uint64_t *)p;
+//     uint64_t *end = (uint64_t *)(p + current_size - sizeof(uint64_t));
+// 
+//     uint64_t s = *start;
+//     uint64_t e = *end;
+// 
+//     int s_ok = (s == SET_VALUE);
+//     int e_ok = (e == SET_VALUE);
+// 
+//     if (s_ok && e_ok) {
+//       fprintf(io, "[%2d] start=%p end=%p size=%zu | OK\n",
+//               i, (void *)start, (void *)end, current_size);
+//       ok++;
+//     } else {
+//       fprintf(io, "[%2d] start=%p end=%p size=%zu | "
+//                   "start=0x%016" PRIx64 " %s, end=0x%016" PRIx64 " %s\n",
+//               i, (void *)start, (void *)end, current_size,
+//               s, s_ok ? "OK" : "MISMATCH",
+//               e, e_ok ? "OK" : "MISMATCH");
+//     }
+//     total++;
+//   }
+// 
+//   fprintf(io, "Summary: %d/%d blocks OK\n", ok, total);
+//   fflush(io);
+// }
+// 
+// static void *socket_reader_thread(void *arg) {
+//     (void)arg;
+//     int lfd = setup_listen_socket(5555);
+//     if (lfd < 0) {
+//         fprintf(stderr, "[QEMU] socket setup failed\n");
+//         return NULL;
+//     }
+//     fprintf(stderr, "///////////////////////////////////\
+//                     \n[QEMU] Listening on 127.0.0.1:5555\
+//                     \nConnect with nc 127.0.0.1 5555\
+//                     \n///////////////////////////////////\n");
+// 
+//     for (;;) {
+//         int cfd = accept(lfd, NULL, NULL);
+//         if (cfd < 0) {
+//             if (errno == EINTR) continue;
+//             perror("[QEMU demo] accept");
+//             break;
+//         }
+//         FILE *io = fdopen(cfd, "r+");
+//         if (!io) {
+//             perror("[QEMU demo] fdopen");
+//             close(cfd);
+//             continue;
+//         }
+//         fprintf(io, "Type address of guest &ptrs[0] (e.g. 0x1234) or <q> to quit.\n > ");
+//         fflush(io);
+// 
+//         char line[256];
+//         while (fgets(line, sizeof(line), io)) {
+//             char *p = line;
+//             while (isspace((unsigned char)*p)) p++;
+//             if (*p == 'q' || *p == 'Q') {
+//                 fprintf(io, "Closing...\n");
+//                 fflush(io);
+//                 break;
+//             }
+//             if (*p == '\0') {
+//                 fprintf(io, " > ");
+//                 fflush(io);
+//                 continue;
+//             }
+// 
+//             char *end = NULL;
+//             unsigned long long entered_hva = strtoull(p, &end, 0);
+//             if (end == p) {
+//                 fprintf(io, "parse error. try again\n");
+//                 fprintf(io, " > ");
+//                 fflush(io);
+//                 continue;
+//             }
+// 
+//             fprintf(io, "Entered=%p\n", (void *)entered_hva);
+//             // safe_print_str(io, host_str, 4096);
+//             // fprintf(io, "\"\n");
+//             verify_all(io, entered_hva);
+//             fprintf(io, " > ");
+//             fflush(io);
+//         }
+//         fclose(io);
+//     }
+// 
+//     close(lfd);
+//     return NULL;
+// }
+// 
+// /*
+//  * ----------------------------------------------------------------------------------------------------------
+//  * ----------------------------------------------------------------------------------------------------------
+//  */
 
 
 
@@ -545,16 +545,16 @@ static int kvm_set_user_memory_region(KVMMemoryListener *kml, KVMSlot *slot, boo
     //        (uint64_t)slot->memory_size,
     //        mem.flags);
 
-    #ifdef ENABLE_LISTENER_FOR_TEST_CASE
-    if (!g_sock_thr_started) {
-        g_sock_thr_started = 1;
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        pthread_create(&g_sock_thr, &attr, socket_reader_thread, NULL);
-        pthread_attr_destroy(&attr);
-    }
-    #endif
+    // #ifdef ENABLE_LISTENER_FOR_TEST_CASE
+    // if (!g_sock_thr_started) {
+    //     g_sock_thr_started = 1;
+    //     pthread_attr_t attr;
+    //     pthread_attr_init(&attr);
+    //     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    //     pthread_create(&g_sock_thr, &attr, socket_reader_thread, NULL);
+    //     pthread_attr_destroy(&attr);
+    // }
+    // #endif
 
     mem.userspace_addr = (unsigned long)slot->ram;
     mem.flags = slot->flags;
