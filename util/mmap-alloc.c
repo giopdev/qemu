@@ -420,8 +420,9 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         activated_ptr = mmap(ptr, size, prot, flags, fd, map_offset);
     }
 
-    // Heuristic, we're always assuming fd = 11 for ram
-    if(fd == 11){
+    // Heuristic, we allocate at least 4GB, and assume no other allocation will top this
+    if(size >= 0x100000000){
+        // printf("SIZE WE NEED = 0x%lx __ OFFSET = 0x%lx\n", size, map_offset);
         if(qemu_map_flags & QEMU_MAP_SHARED){
             // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
             if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
@@ -458,6 +459,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         //     pthread_attr_destroy(&attr);
         // }
         global_ram_address = activated_ptr;
+    }else {
+    // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
     }
 
     return activated_ptr;
