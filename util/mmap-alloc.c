@@ -141,37 +141,16 @@ static void* mmap_listener(void* arg) {
                     break;
                 case SETUP_DATA:
                     /*
-                     * Special Case:
-                     * Make a DATA_SIZE hole in the memory region @ the actual address of the VM ram + DATA_REGION
+                     * Initialize gem_slots
+                     * We intialize all slots to available
+                     * and corresponding correct addresses for host and guest
                      */
                     data_region_actual_address = (void*)((uint64_t)DATA_HOST_OFFSET + (uint64_t)global_ram_address);
-                    int unmap_ret = -1;
-                    unmap_ret = munmap(data_region_actual_address, DATA_SIZE); // unmap at original address
-                    if(unmap_ret != 0){
-                        perror("Munmap of data region failed on original pointer!");
-                        assert(unmap_ret != 0);
+                    for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
+                        gem_slots.host_address[i] = (void*)((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
+                        gem_slots.guest_address[i] = (void*)((uint64_t)DATA_REGION + ((uint64_t)ONE_MEGABYTE * i));
+                        gem_slots.slot_occupied[i] = false;
                     }
-                    else{
-                        printf("Unmapped data region @ %p!\n", data_region_actual_address);
-                    }
-                    unmap_ret = munmap(DATA_REGION, DATA_SIZE); // unmap at aligned address
-                    if(unmap_ret != 0){
-                        perror("Munmap of data region failed on host aligned pointer!");
-                        assert(unmap_ret != 0);
-                    }
-                    else{
-                        printf("Unmapped data region @ %p!\n", data_region_actual_address);
-                    }
-                        /*
-                         * Initialize gem_slots
-                         * We intialize all slots to available
-                         * and corresponding correct addresses for host and guest
-                         */
-                        for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
-                            gem_slots.host_address[i] = (void*)((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
-                            gem_slots.guest_address[i] = (void*)((uint64_t)DATA_REGION + ((uint64_t)ONE_MEGABYTE * i));
-                            gem_slots.slot_occupied[i] = false;
-                        }
                     break;
                 case GEM_ALLOCATION:
                     // Find an empty gem_slot
@@ -199,8 +178,12 @@ static void* mmap_listener(void* arg) {
                     if(fl & MAP_ANONYMOUS){
                         fl = fl ^ MAP_ANONYMOUS;
                     }
+
+                    // Unmap the slot first
+                    assert(munmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE) == 0);
+                    assert(munmap(gem_slots.guest_address[chosenIndex], ONE_MEGABYTE) == 0);
                     // Mapping on original offset
-                    void * ret = mmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE, pr, fl | MAP_SHARED, dummyFd, 0);
+                    void * ret = mmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE, pr, fl | MAP_SHARED | MAP_FIXED, dummyFd, 0);
                     if(ret == MAP_FAILED){
                         perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(ret != MAP_FAILED);
@@ -208,7 +191,7 @@ static void* mmap_listener(void* arg) {
                     assert(ret == gem_slots.host_address[chosenIndex]);
 
                     // Duplicate mapping for alignment
-                    ret = mmap(gem_slots.guest_address[chosenIndex], ONE_MEGABYTE, pr, fl | MAP_SHARED, dummyFd, 0);
+                    ret = mmap(gem_slots.guest_address[chosenIndex], ONE_MEGABYTE, pr, fl | MAP_SHARED | MAP_FIXED, dummyFd, 0);
                     if(ret == MAP_FAILED){
                         perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(ret != MAP_FAILED);
@@ -235,7 +218,9 @@ static void* mmap_listener(void* arg) {
 
             c->resp = 0;
             c->req  = 0;
-        } // if !req
+        } else { // if !req
+            // Do nothing
+        }
     }
     return NULL;
 }
