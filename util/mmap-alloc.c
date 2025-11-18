@@ -144,7 +144,6 @@ static void* mmap_listener(void* arg) {
                      * Special Case:
                      * Make a DATA_SIZE hole in the memory region @ the actual address of the VM ram + DATA_REGION
                      */
-                    // Data region unmap
                     data_region_actual_address = (void*)((uint64_t)DATA_HOST_OFFSET + (uint64_t)global_ram_address);
                     int unmap_ret = -1;
                     unmap_ret = munmap(data_region_actual_address, DATA_SIZE); // unmap at original address
@@ -168,27 +167,11 @@ static void* mmap_listener(void* arg) {
                          * We intialize all slots to available
                          * and corresponding correct addresses for host and guest
                          */
-
                         for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
                             gem_slots.host_address[i] = (void*)((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
                             gem_slots.guest_address[i] = (void*)((uint64_t)DATA_REGION + ((uint64_t)ONE_MEGABYTE * i));
                             gem_slots.slot_occupied[i] = false;
-
-                            // Allocate
-                            // void* ret = mmap(gem_slots.host_address[i], ONE_MEGABYTE, PROT_WRITE | PROT_READ, MAP_ANONYMOUS | MAP_FIXED | MAP_PRIVATE, -1, 0);
-                            // memset(ret, 0x0, ONE_MEGABYTE);
-                            // memset(ret, 0x61, ONE_MEGABYTE);
-                            // memset(ret + ONE_MEGABYTE - 1, 0x61 + (i % 26), 1);
                         }
-                        // void* ret = mmap(data_region_actual_address, DATA_SIZE, PROT_WRITE | PROT_READ, MAP_ANONYMOUS | MAP_FIXED | MAP_PRIVATE, -1, 0);
-                        // if(ret == MAP_FAILED){
-                        //     perror("[QEMU] MMAP failed for RE-MMAPING DATA_REGION");
-                        // }else {
-                        //     printf("SETTING REGION WITH 0x61\n");
-
-                        //     memset(ret, 0x0, DATA_SIZE);
-                        //     memset(ret, 0x61, 1024*1024*64);
-                        // }
                     break;
                 case GEM_ALLOCATION:
                     // Find an empty gem_slot
@@ -244,7 +227,6 @@ static void* mmap_listener(void* arg) {
                     assert(!strcmp((char *)gem_slots.guest_address[chosenIndex], (char *)gem_slots.host_address[chosenIndex]));
                     // printf("set string {%s}\n", (char *)gem_slots.guest_address[chosenIndex]);
                     // printf("test string {%s}\n", (char *)gem_slots.host_address[chosenIndex]);
-
                     break;
                 default:
                     fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)evt);
@@ -253,9 +235,7 @@ static void* mmap_listener(void* arg) {
 
             c->resp = 0;
             c->req  = 0;
-        } else { // if !req
-            // usleep(500);
-        }
+        } // if !req
     }
     return NULL;
 }
