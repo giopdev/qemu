@@ -40,66 +40,66 @@ static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
 static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
 void *global_ram_address = NULL;
 
-// /*
-//  * Giovanni - mmap listener code
-//  */
-// #include <pthread.h>
-// #include <stdio.h>
-// #include <stdint.h>
-// #include <inttypes.h>
-// #include <ctype.h>
-// #include <unistd.h>
-// #include <string.h>
-// #include <errno.h>
-// #include <arpa/inet.h>
-// #include <netinet/in.h>
-// #include <sys/socket.h>
-// 
-// void* data_region_actual_address = NULL;
-// 
-// // Must be set when gpu fd is given
-// int drm_file_descriptor = -1;
-// 
-// typedef struct {
-//     volatile uint64_t magic;
-//     volatile uint32_t req;
-//     volatile uint32_t resp;
-//     volatile uint64_t evt;
-//     volatile uint64_t addr;
-//     volatile uint64_t length;
-//     volatile uint32_t prot;
-//     volatile uint32_t flags;
-//     volatile int32_t  fd;
-//     volatile uint32_t _pad;
-//     volatile uint64_t offset;
-//     volatile int64_t  ret;
-// } comm_page_t;
-// 
-// #define NUMBER_OF_GEM_SLOTS 512
-// typedef struct {
-//     void* host_address[NUMBER_OF_GEM_SLOTS];
-//     void* guest_address[NUMBER_OF_GEM_SLOTS];
-//     bool slot_occupied[NUMBER_OF_GEM_SLOTS];
-// } gem_slots_t;
-// 
-// // events
-// const uint64_t LOG_MMAP_EVENT = 1;
-// const uint64_t SETUP_DATA = 0x2ULL;
-// const uint64_t GEM_ALLOCATION = 3;
-// 
-// // Sizes
-// const size_t ONE_MEGABYTE = 1024*1024;
-// const size_t DATA_SIZE = ONE_MEGABYTE*512; // 512MB
-// const size_t PAGE_SIZE    = 4096;
-// 
-// #define COMM_ADDR  0xf00000ULL
-// #define COMM_MAGIC 0x1234567812345678ULL
-// 
-// static void* DATA_REGION = (void*)0x100008000ULL;
-// // This is different than where it appears in the guest.
-// // Qemu maps the ram region from 0x80000000 into the allocation to 0x100000000 in the guest AS
-// static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
-// 
+/*
+ * Giovanni - mmap listener code
+ */
+#include <pthread.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <string.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
+void* data_region_actual_address = NULL;
+
+// Must be set when gpu fd is given
+int drm_file_descriptor = -1;
+
+typedef struct {
+    volatile uint64_t magic;
+    volatile uint32_t req;
+    volatile uint32_t resp;
+    volatile uint64_t evt;
+    volatile uint64_t addr;
+    volatile uint64_t length;
+    volatile uint32_t prot;
+    volatile uint32_t flags;
+    volatile int32_t  fd;
+    volatile uint32_t _pad;
+    volatile uint64_t offset;
+    volatile int64_t  ret;
+} comm_page_t;
+
+#define NUMBER_OF_GEM_SLOTS 512
+typedef struct {
+    void* host_address[NUMBER_OF_GEM_SLOTS];
+    void* guest_address[NUMBER_OF_GEM_SLOTS];
+    bool slot_occupied[NUMBER_OF_GEM_SLOTS];
+} gem_slots_t;
+
+// events
+const uint64_t LOG_MMAP_EVENT = 1;
+const uint64_t SETUP_DATA = 0x2ULL;
+const uint64_t GEM_ALLOCATION = 3;
+
+// Sizes
+const size_t ONE_MEGABYTE = 1024*1024;
+const size_t DATA_SIZE = ONE_MEGABYTE*512; // 512MB
+const size_t PAGE_SIZE    = 4096;
+
+#define COMM_ADDR  0xf00000ULL
+#define COMM_MAGIC 0x1234567812345678ULL
+
+static void* DATA_REGION = (void*)0x100008000ULL;
+// This is different than where it appears in the guest.
+// Qemu maps the ram region from 0x80000000 into the allocation to 0x100000000 in the guest AS
+static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
+
 // static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
 static pthread_t mmap_listen_thr;
 static int mmap_listen_thr_started = 0;
@@ -463,6 +463,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
             pthread_attr_destroy(&attr);
         }
         global_ram_address = activated_ptr;
+    }else {
+    // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
     }
 
     return activated_ptr;

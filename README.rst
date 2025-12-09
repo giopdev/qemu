@@ -60,9 +60,9 @@ It is possible (especially after a system update) that this step may
 need to be repeated to properly set dependencies. If this occurs simply
 remove the entire build directory and repeat the build steps above.
 
-Create sym-link
+Create symlink
 ========
-After building, we need to create a sym-link so gramine can see our qemu binary
+After building, we need to create a symlink so gramine can see our qemu binary
 
 Run this command inside the build/ directory
 
