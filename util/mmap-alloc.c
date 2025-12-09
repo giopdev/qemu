@@ -25,6 +25,7 @@
 #include "qemu/host-utils.h"
 #include "qemu/cutils.h"
 #include "qemu/error-report.h"
+#include "qemu/sg.h"
 
 #define HUGETLBFS_MAGIC       0x958458f6
 
@@ -37,7 +38,7 @@ static const size_t LOW_OFFSET_INTO_MEMORY = 0x100000ULL;           // 1MB
 static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
 static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
 static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
-void* global_ram_address = NULL;
+void *global_ram_address = NULL;
 
 // /*
 //  * Giovanni - mmap listener code
@@ -100,8 +101,8 @@ void* global_ram_address = NULL;
 // static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
 // 
 // static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
-// static pthread_t mmap_listen_thr;
-// static int mmap_listen_thr_started = 0;
+static pthread_t mmap_listen_thr;
+static int mmap_listen_thr_started = 0;
 // 
 // // Data structure for keeping track of free slots
 // gem_slots_t gem_slots = {0};
@@ -421,10 +422,13 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
     }
 
     // Heuristic, we're always assuming fd = 11 for ram
-    if(fd == 11){
+    if(fd == 24){
+        printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld \n", activated_ptr, size, fd, map_offset);
+        
         if(qemu_map_flags & QEMU_MAP_SHARED){
             // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
             if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
+                printf("Low mapping..\n");
                 size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
                 off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
                 void *want = (void *)VIRTUAL_ADDRESS_LOW;
@@ -437,6 +441,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
 
             // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
             if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
+                printf("high mapping..\n");
                 size_t length = size - HIGH_OFFSET_INTO_MEMORY;
                 off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
                 void *want = (void *)VIRTUAL_ADDRESS_HIGH;
@@ -449,14 +454,14 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         }
 
         // After ram is mapped, spawn mmap listener thread
-        // if (!mmap_listen_thr_started) {
-        //     mmap_listen_thr_started = 1;
-        //     pthread_attr_t attr;
-        //     pthread_attr_init(&attr);
-        //     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        //     pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
-        //     pthread_attr_destroy(&attr);
-        // }
+        if (!mmap_listen_thr_started) {
+            mmap_listen_thr_started = 1;
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
+            pthread_attr_destroy(&attr);
+        }
         global_ram_address = activated_ptr;
     }
 
