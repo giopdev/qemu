@@ -22,9 +22,12 @@
 #include <drm/drm.h>
 #include <drm/i915_drm.h>
 #include <sys/ioctl.h>
+#include <time.h>
+
+struct timespec ts;
 
 void *data_region_actual_address = NULL;
-#define NUMBER_OF_GEM_SLOTS 1024
+#define NUMBER_OF_GEM_SLOTS 810
 typedef struct {
     void* host_address[NUMBER_OF_GEM_SLOTS];
     void* guest_address[NUMBER_OF_GEM_SLOTS];
@@ -36,6 +39,14 @@ xcb_window_t win;
 xcb_connection_t *conn;
 #define WIDTH 1920
 #define HEIGHT 1080
+#define sys_exec_vmexits 549
+#define sys_sg_vmexits_printreset 550
+
+static long mmap_freq = 0;
+static long ioctl_freq = 0;
+static long frame_count = 0;
+static double frame_latency = 0.0;
+static double start_frame = 0.0;
 static void
 dump_shader_bytes(const char *tag, const void *data)
 {
@@ -153,7 +164,7 @@ void prefault_range(void *addr, size_t len)
     char *p = addr;
 
     for (size_t off = 0; off < len; off += 4096)
-        *(volatile char *)(p + off) = 1;
+        memset((void*)(p + off), 0, 4096);
 }
 
 void create_and_setup_xcb_window(){
@@ -226,6 +237,7 @@ extern void* mmap_listener(void* arg) {
                         }
                     }
                     pthread_mutex_unlock(&gem_slots_lock);
+                    log_sg("Chosen slot: %d\n", chosenIndex);
                     assert(chosenIndex != -1); // did we find a free slot?
                     assert(c->p2 <= ONE_MEGABYTE);
                     assert(munmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE) == 0);
@@ -251,6 +263,8 @@ extern void* mmap_listener(void* arg) {
                     // Set address for guest
                     c->ret = (uint64_t)gem_slots.guest_address[chosenIndex];
                     c->req_bit = 0;
+                    log_sg("mmap() returned");
+                    mmap_freq++;
                     break;
                 
                 case FSTAT:
@@ -267,6 +281,7 @@ extern void* mmap_listener(void* arg) {
                     log_sg("ioctl() returned: %d", ret);
 
                     c->req_bit = 0;
+                    ioctl_freq++;
                     break; 
                 case OPEN:
                     log_sg("open() is called");
@@ -338,6 +353,7 @@ extern void* mmap_listener(void* arg) {
                             NULL);       // notifies
 
                     xcb_flush(conn);
+
                     // fprintf(stderr, "fd %d first 32 bytes: \n", tmp_buf[c->p2].bo_fd);
 
                     // uint8_t *p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, 273, 0);
@@ -358,6 +374,26 @@ extern void* mmap_listener(void* arg) {
 
                     c->req_bit = 0;
                     log_sg("X11_PRESENT() completed");
+                    frame_count++;
+                    if (start_frame > 0){
+                        clock_gettime(CLOCK_REALTIME, &ts);
+                        double end_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+                        frame_latency += (end_frame - start_frame);
+                    }
+                    if(frame_count == 1){
+                        mmap_freq = 0;
+                        ioctl_freq = 0;
+                        frame_latency = 0.0;
+                        syscall(sys_exec_vmexits);
+                    }
+                    clock_gettime(CLOCK_REALTIME, &ts);
+                    start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+                    if(frame_count%5000 == 0){
+                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
+                        fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; VMEXITS: %ld\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, syscall(sys_sg_vmexits_printreset));
+                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
+                        frame_latency = 0;
+                    }
                     break;
                 case CLOSE:
                     log_sg("close() is called");

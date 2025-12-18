@@ -13,6 +13,7 @@
 #include <EGL/eglext.h>
 #include <xcb/xcb.h>
 #include <xcb/sync.h>
+// #define SG_DEBUG
 
 #ifdef SG_DEBUG
 #define log_sg(fmt, ...) \
@@ -73,11 +74,10 @@ static const  uint64_t CLOSE = 14;
 
 
 // Sizes
-static const  size_t ONE_MEGABYTE = 1024*1024*25;
+static const  size_t ONE_MEGABYTE = 1024*1024*10;
 static const  size_t FIVETWELVE_MEGABYTE = 1024*1024*512;
-static const  size_t DATA_SIZE = FIVETWELVE_MEGABYTE*4; // 2G
+static const  size_t DATA_SIZE = FIVETWELVE_MEGABYTE*16; // 2G
 static const  size_t PAGE_SIZE    = 4096;
-static const  size_t NUMBER_OF_GEM_SLOTS    = 20;
 
 #define COMM_ADDR  0xf00000ULL
 #define COMM_MAGIC 0x1234567812345678ULL
@@ -91,9 +91,3 @@ static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
 
 
 void* mmap_listener(void* arg);
-
-// typedef struct {
-//     void* host_address[NUMBER_OF_GEM_SLOTS];
-//     void* guest_address[NUMBER_OF_GEM_SLOTS];
-//     bool slot_occupied[NUMBER_OF_GEM_SLOTS];
-// } gem_slots_t;
