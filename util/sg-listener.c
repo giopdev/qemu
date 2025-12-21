@@ -23,6 +23,8 @@
 #include <drm/i915_drm.h>
 #include <sys/ioctl.h>
 #include <time.h>
+#include <string.h>
+#include <sys/stat.h>
 
 struct timespec ts;
 
@@ -99,19 +101,20 @@ static void create_pixmap_from_kbuf(check* bufs, int buf_index, uint32_t size_by
             err->major_code,
             err->minor_code);
         free(err);
-        return -1;   // or handle the error however you need
+        return;   // or handle the error however you need
     }
 
     fprintf(stderr, "PIXMAP: %d for index: %d\n", bufs[buf_index].pixmap, buf_index);
 }
 
-static create_xcb_fence(check* bufs, int buf_index){
+static int create_xcb_fence(check* bufs, int buf_index){
     /*
         [pid 111638] memfd_create("xshmfence", MFD_CLOEXEC|MFD_ALLOW_SEALING) = 9
         [pid 111638] ftruncate(9, 4)            = 0
         [pid 111638] mmap(NULL, 4, PROT_READ|PROT_WRITE, MAP_SHARED, 9, 0) = 0x7a2aa2cbf000
         [pid 111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=7, revents=POLLOUT}])
-        [pid 111638] sendmsg(7, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\225\4\4\0\1\0\300\4\2\0\300\4\0\0\0\0", iov_len=16}], msg_iovlen=1, msg_control=[{cmsg_len=20, cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}], msg_controllen=20, msg_flags=0}, 0) = 16
+        [pid 111638] sendmsg(7, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="\225\4\4\0\1\0\300\4\2\0\300\4\0\0\0\0", iov_len=16}], msg_iovlen=1, 
+                msg_control=[{cmsg_len=20, cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}], msg_controllen=20, msg_flags=0}, 0) = 16
         [pid 111638] close(9)                   = 0
                             
     */
@@ -126,17 +129,14 @@ static create_xcb_fence(check* bufs, int buf_index){
 
     xcb_void_cookie_t cookie = xcb_dri3_fence_from_fd_checked(conn, bufs[buf_index].pixmap, bufs[buf_index].sync_fence, 0, bufs[buf_index].shm_fence_fd);
 
-                            /*
-                                    Logic:
+    /*
+        Logic:
+            1: Gets the memfd from (1)
+            2: Maps to our process using mmap (xshmfence_map_shm)
+            3: identifier for the fence is sync_fence (X11 allocated)
+            4: Transfers ownership of the fd to the X11. and closes the fd inside process.            
 
-                                        1: Gets the memfd from (1)
-                                        2: Maps to our process using mmap (xshmfence_map_shm)
-                                        3: identifier for the fence is sync_fence (X11 allocated)
-
-                                        4: Transfers ownership of the fd to the X11. and closes the fd inside process.
-                                        
-                            
-                            */
+    */
     xcb_flush(conn);
 
     xcb_generic_error_t *err = xcb_request_check(conn, cookie);
@@ -157,8 +157,9 @@ static create_xcb_fence(check* bufs, int buf_index){
     }
 
     fprintf(stderr, "All done from XCB side for index: %d\n", buf_index);
-
+    return 0; // adil: added a return value
 }
+
 void prefault_range(void *addr, size_t len)
 {
     char *p = addr;
@@ -243,22 +244,22 @@ extern void* mmap_listener(void* arg) {
                     assert(munmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE) == 0);
                     assert(munmap(gem_slots.guest_address[chosenIndex], ONE_MEGABYTE) == 0);
                     // Mapping on original offset
-                    void * ret = mmap(gem_slots.host_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-                    if(ret == MAP_FAILED){
+                    void * retptr = mmap(gem_slots.host_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    if(retptr == MAP_FAILED){
                         perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
-                        assert(ret != MAP_FAILED);
+                        assert(retptr != MAP_FAILED);
                     }
-                    assert(ret == gem_slots.host_address[chosenIndex]);
+                    assert(retptr == gem_slots.host_address[chosenIndex]);
 
                     // prefault_range(gem_slots.host_address[chosenIndex], c->p2);
                     // sleep(5);
                     // Duplicate mapping for alignment
-                    ret = mmap(gem_slots.guest_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-                    if(ret == MAP_FAILED){
+                    retptr = mmap(gem_slots.guest_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    if(retptr == MAP_FAILED){
                         perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(ret != MAP_FAILED);
                     }
-                    assert(ret == gem_slots.guest_address[chosenIndex]);
+                    assert(retptr == gem_slots.guest_address[chosenIndex]);
                     // prefault_range(gem_slots.guest_address[chosenIndex], c->p2);
                     // Set address for guest
                     c->ret = (uint64_t)gem_slots.guest_address[chosenIndex];
@@ -269,7 +270,7 @@ extern void* mmap_listener(void* arg) {
                 
                 case FSTAT:
                     log_sg("fstat() is called");
-                    ret = fstat(c->p1, c->p2);
+                    ret = fstat(c->p1, (struct stat*) c->p2);
                     c->ret = ret;
                     log_sg("fstat() returned: %d", ret);
                     c->req_bit = 0;
@@ -285,7 +286,7 @@ extern void* mmap_listener(void* arg) {
                     break; 
                 case OPEN:
                     log_sg("open() is called");
-                    ret = open(c->p1, c->p2, c->p3);
+                    ret = open((const char*) c->p1, c->p2, c->p3);
                     c->ret = ret;
                     log_sg("open() returned: %d", ret);
                     c->req_bit = 0;
@@ -299,14 +300,14 @@ extern void* mmap_listener(void* arg) {
                     break;
                 case READLINK:
                     log_sg("readlink() is called");
-                    ret = readlink(c->p1, c->p2, c->p3);
+                    ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
                     c->ret = ret;
                     log_sg("readlink() returned: %d", ret);
                     c->req_bit = 0;
                     break;  
                 case NEWFSTAT:
                     log_sg("newfstatat() is called");
-                    ret = fstatat(c->p1, c->p2, c->p3, c->p4);
+                    ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
                     c->ret = ret;
                     log_sg("newfstatat() returned: %d", ret);
                     c->req_bit = 0;
@@ -327,14 +328,14 @@ extern void* mmap_listener(void* arg) {
                     break;
                 case X11_SETUP:
                     log_sg("X11_SETUP() is called");
-                    create_pixmap_from_kbuf(c->p1, c->p2, c->p3, c->p4);
-                    create_xcb_fence(c->p1, c->p2);
+                    create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
+                    create_xcb_fence((check*) c->p1, c->p2);
                     log_sg("X11_SETUP() completed");
                     c->req_bit = 0;
                     // bufs_persistent = c->p1;
                     break;
                 case X11_PRESENT:
-                    check *tmp_buf = c->p1;
+                    check *tmp_buf = (check*) c->p1;
                     // fprintf(stderr, "[HOST PRESENT] cur=%d bo=%p fd=%d\n",
                     //     c->p2, tmp_buf[c->p2].bo, tmp_buf[c->p2].bo_fd);
                     log_sg("X11_PRESENT() is called %d\n", tmp_buf[c->p2].bo_fd);
