@@ -221,10 +221,18 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
 
     activated_ptr = mmap(ptr, size, prot, flags | map_sync_flags, fd,
                          map_offset);
+    char *proc_link = g_strdup_printf("/proc/self/fd/%d", fd);
+    char *file_name = g_malloc0(PATH_MAX);
+    int len = readlink(proc_link, file_name, PATH_MAX - 1);
+
+    if (len < 0) {
+        len = 0;
+    }
+    file_name[len] = '\0';
     if (activated_ptr == MAP_FAILED && map_sync_flags) {
         if (errno == ENOTSUP) {
-            char *proc_link = g_strdup_printf("/proc/self/fd/%d", fd);
-            char *file_name = g_malloc0(PATH_MAX);
+            proc_link = g_strdup_printf("/proc/self/fd/%d", fd);
+            file_name = g_malloc0(PATH_MAX);
             int len = readlink(proc_link, file_name, PATH_MAX - 1);
 
             if (len < 0) {
@@ -248,8 +256,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
     }
 
     // Heuristic, we're always assuming fd = 11 for ram
-    if(fd == 24 || size > 4*1024*1024*1024){
-        printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld \n", activated_ptr, size, fd, map_offset);
+    if(!strcmp(file_name, "/memfd:memory-backend-memfd")){
+        printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
         
         if(qemu_map_flags & QEMU_MAP_SHARED){
             // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
@@ -291,7 +299,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
     }else {
     // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
     }
-
+    g_free(proc_link);
+    g_free(file_name);
     return activated_ptr;
 }
 
