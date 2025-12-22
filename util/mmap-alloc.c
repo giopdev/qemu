@@ -256,7 +256,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
     }
 
     // Heuristic, we're always assuming fd = 11 for ram
-    if(!strcmp(file_name, "/memfd:memory-backend-memfd")){
+    if(strstr(file_name, "/memfd:memory-backend-memfd")){
         printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
         
         if(qemu_map_flags & QEMU_MAP_SHARED){
