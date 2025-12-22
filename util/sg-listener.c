@@ -31,8 +31,8 @@ struct timespec ts;
 void *data_region_actual_address = NULL;
 #define NUMBER_OF_GEM_SLOTS 810
 typedef struct {
-    void* host_address[NUMBER_OF_GEM_SLOTS];
-    void* guest_address[NUMBER_OF_GEM_SLOTS];
+    uint64_t host_address[NUMBER_OF_GEM_SLOTS];
+    uint64_t guest_address[NUMBER_OF_GEM_SLOTS];
     bool slot_occupied[NUMBER_OF_GEM_SLOTS];
 } gem_slots_t;
 gem_slots_t gem_slots = {0};
@@ -190,9 +190,21 @@ void create_and_setup_xcb_window(){
     xcb_present_select_input(conn, win, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY, 0);
 
 }
-
+void setup_data(comm_page_t* c){
+    log_sg("Data region addr: %p\n", c->p10);
+    uint64_t data_start = c->p10;
+    data_region_actual_address = (void*)((uint64_t)(2*1024*1024*1024 + data_start) + (uint64_t)global_ram_address);
+    for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
+        gem_slots.host_address[i] = ((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
+        gem_slots.guest_address[i] = ((uint64_t)data_start + ((uint64_t)ONE_MEGABYTE * i));
+        gem_slots.slot_occupied[i] = false;
+    }
+    create_and_setup_xcb_window();
+    c->ret = 0;
+    c->req_bit = 0;
+}
 extern void* mmap_listener(void* arg) {
-    comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
+    volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
     while (c->magic != COMM_MAGIC) {
         usleep(1000);
     }
@@ -210,19 +222,9 @@ extern void* mmap_listener(void* arg) {
                 case LOG_MMAP_EVENT:
                     break;
                 case SETUP_DATA:
-                    /*
-                     * Initialize gem_slots
-                     * We intialize all slots to available
-                     * and corresponding correct addresses for host and guest
-                     */
-                    data_region_actual_address = (void*)((uint64_t)DATA_HOST_OFFSET + (uint64_t)global_ram_address);
-                    for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
-                        gem_slots.host_address[i] = (void*)((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
-                        gem_slots.guest_address[i] = (void*)((uint64_t)DATA_REGION + ((uint64_t)ONE_MEGABYTE * i));
-                        gem_slots.slot_occupied[i] = false;
-                    }
-                    c->req_bit = 0;
-                    create_and_setup_xcb_window();
+                    log_sg("SETUP_DATA() is called");
+                    setup_data(c);
+                    log_sg("SETUP_DATA() is completed");
                     break;
                 case GEM_ALLOCATION:
                     log_sg("mmap() is called");
@@ -246,7 +248,7 @@ extern void* mmap_listener(void* arg) {
                     // Mapping on original offset
                     void * retptr = mmap(gem_slots.host_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
                     if(retptr == MAP_FAILED){
-                        perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
+                        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(retptr != MAP_FAILED);
                     }
                     assert(retptr == gem_slots.host_address[chosenIndex]);
@@ -256,7 +258,7 @@ extern void* mmap_listener(void* arg) {
                     // Duplicate mapping for alignment
                     retptr = mmap(gem_slots.guest_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
                     if(retptr == MAP_FAILED){
-                        perror("[QEMU] MMAP failed for GEM_ALLOCATION!!!!!");
+                        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(ret != MAP_FAILED);
                     }
                     assert(retptr == gem_slots.guest_address[chosenIndex]);
@@ -264,7 +266,7 @@ extern void* mmap_listener(void* arg) {
                     // Set address for guest
                     c->ret = (uint64_t)gem_slots.guest_address[chosenIndex];
                     c->req_bit = 0;
-                    log_sg("mmap() returned");
+                    log_sg("mmap() returned: 0x%lx", c->ret);
                     mmap_freq++;
                     break;
                 
@@ -285,9 +287,10 @@ extern void* mmap_listener(void* arg) {
                     ioctl_freq++;
                     break; 
                 case OPEN:
-                    log_sg("open() is called");
+                    log_sg("open() is called: %s", c->p1);
                     ret = open((const char*) c->p1, c->p2, c->p3);
                     c->ret = ret;
+                    __sync_synchronize();
                     log_sg("open() returned: %d", ret);
                     c->req_bit = 0;
                     break;
