@@ -31,9 +31,8 @@ struct timespec ts;
 void *data_region_actual_address = NULL;
 #define NUMBER_OF_GEM_SLOTS 204
 typedef struct {
-    uint64_t host_address[NUMBER_OF_GEM_SLOTS];
-    uint64_t guest_address[NUMBER_OF_GEM_SLOTS];
-    bool slot_occupied[NUMBER_OF_GEM_SLOTS];
+    uint64_t host_address;
+    uint64_t guest_address;
 } gem_slots_t;
 gem_slots_t gem_slots = {0};
 
@@ -195,11 +194,8 @@ void setup_data(comm_page_t* c){
     fflush(stderr);
     uint64_t data_start = c->p10;
     data_region_actual_address = (void*)((uint64_t)(-2*1024*1024*1024 + data_start) + (uint64_t)global_ram_address);
-    for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
-        gem_slots.host_address[i] = ((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
-        gem_slots.guest_address[i] = ((uint64_t)data_start + ((uint64_t)ONE_MEGABYTE * i));
-        gem_slots.slot_occupied[i] = false;
-    }
+    gem_slots.host_address =  ((uint64_t)data_region_actual_address);
+    gem_slots.guest_address = ((uint64_t)data_start);
     // sleep(10000000000);
     create_and_setup_xcb_window();
     c->ret = 0;
@@ -229,44 +225,31 @@ extern void* mmap_listener(void* arg) {
                     log_sg("SETUP_DATA() is completed");
                     break;
                 case GEM_ALLOCATION:
-                    log_sg("mmap() is called");
-                    // Find an empty gem_slot
-                    int chosenIndex = -1;
-                    pthread_mutex_lock(&gem_slots_lock);
-                    for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++)
-                    {
-                        if(!gem_slots.slot_occupied[i]){
-                            gem_slots.slot_occupied[i] = true;
-                            chosenIndex = i;
-                            break;
-                        }
-                    }
-                    pthread_mutex_unlock(&gem_slots_lock);
-                    log_sg("Chosen slot: %d\n", chosenIndex);
-                    assert(chosenIndex != -1); // did we find a free slot?
-                    assert(c->p2 <= ONE_MEGABYTE);
-                    assert(munmap(gem_slots.host_address[chosenIndex], ONE_MEGABYTE) == 0);
-                    assert(munmap(gem_slots.guest_address[chosenIndex], ONE_MEGABYTE) == 0);
+                    uint64_t size = c->p2;
+                    assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
+                    assert(munmap(gem_slots.host_address, size) == 0);
+                    assert(munmap(gem_slots.guest_address, size) == 0);
+
                     // Mapping on original offset
-                    void * retptr = mmap(gem_slots.host_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    void * retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
                     if(retptr == MAP_FAILED){
                         perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(retptr != MAP_FAILED);
                     }
-                    assert(retptr == gem_slots.host_address[chosenIndex]);
+                    assert(retptr == gem_slots.host_address);
 
-                    // prefault_range(gem_slots.host_address[chosenIndex], c->p2);
-                    // sleep(5);
-                    // Duplicate mapping for alignment
-                    retptr = mmap(gem_slots.guest_address[chosenIndex], c->p2, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
                     if(retptr == MAP_FAILED){
                         perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
                         assert(ret != MAP_FAILED);
                     }
-                    assert(retptr == gem_slots.guest_address[chosenIndex]);
-                    // prefault_range(gem_slots.guest_address[chosenIndex], c->p2);
-                    // Set address for guest
-                    c->ret = (uint64_t)gem_slots.guest_address[chosenIndex];
+                    assert(retptr == gem_slots.guest_address);
+
+                    c->ret = (uint64_t)gem_slots.guest_address;
+                    pthread_mutex_lock(&gem_slots_lock);
+                        gem_slots.host_address += 4096 * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                        gem_slots.guest_address += 4096 * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                    pthread_mutex_unlock(&gem_slots_lock);
                     c->req_bit = 0;
                     log_sg("mmap() returned: 0x%lx", c->ret);
                     mmap_freq++;
