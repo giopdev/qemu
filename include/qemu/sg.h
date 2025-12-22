@@ -13,7 +13,7 @@
 #include <EGL/eglext.h>
 #include <xcb/xcb.h>
 #include <xcb/sync.h>
-// #define SG_DEBUG
+#define SG_DEBUG
 
 #ifdef SG_DEBUG
 #define log_sg(fmt, ...) \

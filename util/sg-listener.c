@@ -29,7 +29,7 @@
 struct timespec ts;
 
 void *data_region_actual_address = NULL;
-#define NUMBER_OF_GEM_SLOTS 810
+#define NUMBER_OF_GEM_SLOTS 204
 typedef struct {
     uint64_t host_address[NUMBER_OF_GEM_SLOTS];
     uint64_t guest_address[NUMBER_OF_GEM_SLOTS];
@@ -191,14 +191,16 @@ void create_and_setup_xcb_window(){
 
 }
 void setup_data(comm_page_t* c){
-    log_sg("Data region addr: %p\n", c->p10);
+    log_sg("Data region addr: %p; Host Base address: %p\n", c->p10, global_ram_address);
+    fflush(stderr);
     uint64_t data_start = c->p10;
-    data_region_actual_address = (void*)((uint64_t)(2*1024*1024*1024 + data_start) + (uint64_t)global_ram_address);
+    data_region_actual_address = (void*)((uint64_t)(-2*1024*1024*1024 + data_start) + (uint64_t)global_ram_address);
     for(int i = 0; i < NUMBER_OF_GEM_SLOTS; i++){
         gem_slots.host_address[i] = ((uint64_t)data_region_actual_address + ((uint64_t)ONE_MEGABYTE * i));
         gem_slots.guest_address[i] = ((uint64_t)data_start + ((uint64_t)ONE_MEGABYTE * i));
         gem_slots.slot_occupied[i] = false;
     }
+    // sleep(10000000000);
     create_and_setup_xcb_window();
     c->ret = 0;
     c->req_bit = 0;
