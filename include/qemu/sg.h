@@ -74,9 +74,8 @@ static const  uint64_t CLOSE = 14;
 
 
 // Sizes
-static const  size_t ONE_MEGABYTE = 1024*1024*10;
 static const  size_t FIVETWELVE_MEGABYTE = 1024*1024*512;
-static const  size_t DATA_SIZE = FIVETWELVE_MEGABYTE*16; // 2G
+static const  size_t DATA_SIZE = FIVETWELVE_MEGABYTE*2; // 1G
 static const  size_t PAGE_SIZE    = 4096;
 
 #define COMM_ADDR  0xf00000ULL

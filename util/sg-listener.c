@@ -29,7 +29,6 @@
 struct timespec ts;
 
 void *data_region_actual_address = NULL;
-#define NUMBER_OF_GEM_SLOTS 204
 typedef struct {
     uint64_t host_address;
     uint64_t guest_address;
@@ -63,6 +62,15 @@ dump_shader_bytes(const char *tag, const void *data)
     }
     fprintf(stderr, "\n\n");
 }
+#include <GL/gl.h>
+#include <stdio.h>
+
+#include <gbm.h>
+
+#include <gbm.h>
+#include <stdio.h>
+#include <stdint.h>
+
 static check* bufs_persistent = NULL;
 static pthread_mutex_t gem_slots_lock = PTHREAD_MUTEX_INITIALIZER;
 static void create_pixmap_from_kbuf(check* bufs, int buf_index, uint32_t size_bytes, uint32_t stride){
@@ -193,7 +201,7 @@ void setup_data(comm_page_t* c){
     log_sg("Data region addr: %p; Host Base address: %p\n", c->p10, global_ram_address);
     fflush(stderr);
     uint64_t data_start = c->p10;
-    data_region_actual_address = (void*)((uint64_t)(-2*1024*1024*1024 + data_start) + (uint64_t)global_ram_address);
+    data_region_actual_address = (void*)((uint64_t)(-2*1024*1024*1024 /* Offset: Ref gio's diag */ + data_start) + (uint64_t)global_ram_address);
     gem_slots.host_address =  ((uint64_t)data_region_actual_address);
     gem_slots.guest_address = ((uint64_t)data_start);
     // sleep(10000000000);
@@ -326,8 +334,7 @@ extern void* mmap_listener(void* arg) {
                     check *tmp_buf = (check*) c->p1;
                     // fprintf(stderr, "[HOST PRESENT] cur=%d bo=%p fd=%d\n",
                     //     c->p2, tmp_buf[c->p2].bo, tmp_buf[c->p2].bo_fd);
-                    log_sg("X11_PRESENT() is called %d\n", tmp_buf[c->p2].bo_fd);
-                    // sleep(2000);
+                    log_sg("X11_PRESENT() is called\n");
                     xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
                             0,           // serial
                             XCB_NONE,    // valid
@@ -342,25 +349,6 @@ extern void* mmap_listener(void* arg) {
                             NULL);       // notifies
 
                     xcb_flush(conn);
-
-                    // fprintf(stderr, "fd %d first 32 bytes: \n", tmp_buf[c->p2].bo_fd);
-
-                    // uint8_t *p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, 273, 0);
-                    // if (p == MAP_FAILED) perror("mmap");
-                    
-                    // for (int i = 0; i < 128; i++)
-                    //     printf("%02x ", p[i]);
-                    // printf("\n");
-
-                    // p = mmap(NULL, 4096, PROT_READ, MAP_SHARED, 274, 0);
-                    // if (p == MAP_FAILED) perror("mmap");
-                    
-                    // for (int i = 0; i < 128; i++)
-                    //     printf("%02x ", p[i]);
-                    // printf("\n");
-                    // sleep(20000000);
-
-
                     c->req_bit = 0;
                     log_sg("X11_PRESENT() completed");
                     frame_count++;
