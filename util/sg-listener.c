@@ -46,7 +46,9 @@ static long mmap_freq = 0;
 static long ioctl_freq = 0;
 static long frame_count = 0;
 static double frame_latency = 0.0;
+static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
+static uint64_t execbuf_count = 0;
 static void
 dump_shader_bytes(const char *tag, const void *data)
 {
@@ -70,7 +72,73 @@ dump_shader_bytes(const char *tag, const void *data)
 #include <gbm.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <time.h>
+#include <stdint.h>
+#define I915_EXEC_ASYNC (1<<15)
+static inline uint64_t clock_gettime_ns(void)
+{
+    
+    unsigned int lo, hi;
+    asm volatile("lfence; rdtscp" : "=a"(lo), "=d"(hi) :: "memory");
+    return ((uint64_t)hi << 32) | lo;
+}
 
+#include <stdio.h>
+#include <stdint.h>
+
+#define LOG_BATCH_SIZE 100  // Number of entries to hold in memory before flushing
+
+// Structure to hold our raw measurements
+typedef struct {
+    uint64_t req_type;
+    int frame;
+    uint64_t cycles;
+    int ret;
+} log_entry_t;
+
+void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret) {
+    static log_entry_t buffer[LOG_BATCH_SIZE];
+    static int current_idx = 0;
+    static FILE *fp = NULL;
+
+    // 1. Always calculate the delta in memory (High Precision)
+    buffer[current_idx].req_type = req_type;
+    buffer[current_idx].frame = frame_count;
+    buffer[current_idx].cycles = end - start;
+    buffer[current_idx].ret = ret;
+    current_idx++;
+
+    // 2. Only hit the disk when the buffer is full
+    if (current_idx >= LOG_BATCH_SIZE) {
+        if (!fp) {
+            fp = fopen("./logs_ioctl", "a");
+            if (!fp) return;
+        }
+
+        // Write all 100 entries at once
+        for (int i = 0; i < LOG_BATCH_SIZE; i++) {
+            fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d\n", 
+                    buffer[i].req_type, buffer[i].frame, buffer[i].cycles, buffer[i].ret);
+        }
+
+        // Flush to disk and reset buffer index
+        fflush(fp);
+        current_idx = 0;
+    }
+}
+
+void wait_for_batch(int fd, uint32_t handle) {
+    struct drm_i915_gem_wait wait = {
+        .bo_handle = handle,
+        .flags = 0,      // Reserved for future use
+        .timeout_ns = -1 // Wait forever (or set a timeout in nanoseconds)
+    };
+
+    // Call the WAIT IOCTL (3222824052)
+    if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &wait) < 0) {
+        perror("GEM WAIT failed");
+    }
+}
 static check* bufs_persistent = NULL;
 static pthread_mutex_t gem_slots_lock = PTHREAD_MUTEX_INITIALIZER;
 static void create_pixmap_from_kbuf(check* bufs, int buf_index, uint32_t size_bytes, uint32_t stride){
@@ -171,10 +239,22 @@ void prefault_range(void *addr, size_t len)
 {
     char *p = addr;
 
-    for (size_t off = 0; off < len; off += 4096)
-        memset((void*)(p + off), 0, 4096);
+    for (size_t off = 0; off < len; off += PAGE_SIZE)
+        memset((void*)(p + off), 0, PAGE_SIZE);
 }
+#include <time.h>
 
+void throttle_listener() {
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1000000; // 1 millisecond sleep
+    
+    // Adjust the frequency: sleep 1ms every 10 polls
+    static int counter = 0;
+    if (++counter % 10 == 0) {
+        nanosleep(&ts, NULL);
+    }
+}
 void create_and_setup_xcb_window(){
     conn = xcb_connect(NULL, NULL);
     if (xcb_connection_has_error(conn)) { fprintf(stderr,"xcb_connect failed\n"); return; }
@@ -210,6 +290,11 @@ void setup_data(comm_page_t* c){
     c->req_bit = 0;
 }
 extern void* mmap_listener(void* arg) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(3, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    
     volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
     while (c->magic != COMM_MAGIC) {
         usleep(1000);
@@ -235,8 +320,8 @@ extern void* mmap_listener(void* arg) {
                 case GEM_ALLOCATION:
                     uint64_t size = c->p2;
                     assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    assert(munmap(gem_slots.host_address, size) == 0);
-                    assert(munmap(gem_slots.guest_address, size) == 0);
+                    assert(madvise(gem_slots.host_address, size, MADV_DONTNEED) == 0);
+                    assert(madvise(gem_slots.guest_address, size, MADV_DONTNEED) == 0);
 
                     // Mapping on original offset
                     void * retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3, c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
@@ -255,8 +340,8 @@ extern void* mmap_listener(void* arg) {
 
                     c->ret = (uint64_t)gem_slots.guest_address;
                     pthread_mutex_lock(&gem_slots_lock);
-                        gem_slots.host_address += 4096 * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                        gem_slots.guest_address += 4096 * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                        gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                        gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
                     pthread_mutex_unlock(&gem_slots_lock);
                     c->req_bit = 0;
                     log_sg("mmap() returned: 0x%lx", c->ret);
@@ -270,15 +355,47 @@ extern void* mmap_listener(void* arg) {
                     log_sg("fstat() returned: %d", ret);
                     c->req_bit = 0;
                     break; 
-                case IOCTL:
-                    log_sg("ioctl(%ld, %ld, 0x%lx) is called", c->p1, c->p2, c->p3);
-                    ret = ioctl(c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("ioctl() returned: %d", ret);
+                case IOCTL: {
+                    uint64_t start,end;
+                    if(c->p2 == 3223872707){
+                        struct drm_i915_gem_execbuffer2 *eb2 = (struct drm_i915_gem_execbuffer2 *)(c->p3); /* EXECBUFFER */
+                        asm volatile("lfence" ::: "memory");
+                        fprintf(stderr, "DEBUG: eb2->buffers_ptr is %p\n", (void*)eb2->buffers_ptr);
+                        struct drm_i915_gem_exec_object2 *obj_list = (struct drm_i915_gem_exec_object2 *)(uintptr_t)eb2->buffers_ptr;
 
+                        uint32_t batch_handle;
+
+                        if (eb2->flags & I915_EXEC_BATCH_FIRST) {
+                            // If flag is set, it's the first one
+                            batch_handle = obj_list[0].handle;
+                        } else {
+                            // Default: it's the last one in the list
+                            batch_handle = obj_list[eb2->buffer_count - 1].handle;
+                        }
+                        start = clock_gettime_ns();
+                        asm volatile("lfence" ::: "memory");
+                        wait_for_batch(c->p1, batch_handle);
+                        asm volatile("lfence" ::: "memory");
+                        end = clock_gettime_ns();
+                        log_latency_buffered(DRM_IOCTL_I915_GEM_WAIT, frame_count, start, end, ret);
+                    }
+
+                    // Now you can use this handle for your test:
+                    // wait_for_batch(fd, batch_handle);
+                    start = clock_gettime_ns();
+                    asm volatile("lfence" ::: "memory");
+                    uint64_t req_type = c->p2;
+                    ret = ioctl(c->p1, c->p2, (void *)c->p3);
+                    asm volatile("lfence" ::: "memory");
+                    end = clock_gettime_ns();
+
+                    c->ret = ret;
                     c->req_bit = 0;
                     ioctl_freq++;
-                    break; 
+                    log_latency_buffered(req_type, frame_count, start, end, ret);
+                    break;
+                }
+
                 case OPEN:
                     log_sg("open() is called: %s", c->p1);
                     ret = open((const char*) c->p1, c->p2, c->p3);
@@ -341,8 +458,8 @@ extern void* mmap_listener(void* arg) {
                             XCB_NONE,    // update
                             0, 0,        // x, y
                             XCB_NONE,    // target_crtc
-                            tmp_buf[c->p2].sync_fence,  // wait_fence
-                            c->p3,               // idle_fence
+                            XCB_NONE,  // wait_fence
+                            XCB_NONE,               // idle_fence
                             0,           // options
                             0, 0, 0,     // target_msc, divisor, remainder
                             0,           // notifies_len
@@ -361,15 +478,23 @@ extern void* mmap_listener(void* arg) {
                         mmap_freq = 0;
                         ioctl_freq = 0;
                         frame_latency = 0.0;
-                        syscall(sys_exec_vmexits);
+                        time_spent_in_ioctl = 0;
                     }
                     clock_gettime(CLOCK_REALTIME, &ts);
                     start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
                     if(frame_count%5000 == 0){
                         fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                        fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; VMEXITS: %ld\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, syscall(sys_sg_vmexits_printreset));
+                        fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f VMEXITS: NaN\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
                         fprintf(stderr, "------------------SG STATS-----------------------------\n");
                         frame_latency = 0;
+                        ioctl_freq = 0;
+                        mmap_freq = 0;
+                        time_spent_in_ioctl = 0;
+                        fprintf(stderr,
+                    "Frame %lu: execbuffers=%" PRIu64 "\n",
+                    frame_count, execbuf_count);
+                execbuf_count = 0;
+
                     }
                     break;
                 case CLOSE:
@@ -383,7 +508,7 @@ extern void* mmap_listener(void* arg) {
                     // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)c->req_bit);
                     break;
             }
-        
+        // throttle_listener();
         }
     return NULL;
 }
