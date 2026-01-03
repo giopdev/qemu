@@ -8,16 +8,13 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-
 #include <xcb/dri3.h>
 #include <xcb/present.h>
 #include <xcb/sync.h>
 #include <xcb/xcb.h>
-
 #include <xcb/dri3.h>
 #include <xcb/present.h>
 #include <xcb/xfixes.h>
-
 #include <X11/xshmfence.h>
 #include <drm/drm.h>
 #include <drm/i915_drm.h>
@@ -25,9 +22,20 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <GL/gl.h>
+#include <stdio.h>
+#include <gbm.h>
+#include <gbm.h>
+#include <stdint.h>
+#include <time.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdint.h>
+
 
 struct timespec ts;
-
 void *data_region_actual_address = NULL;
 typedef struct {
   uint64_t host_address;
@@ -37,10 +45,6 @@ gem_slots_t gem_slots = {0};
 
 xcb_window_t win;
 xcb_connection_t *conn;
-#define WIDTH 1920
-#define HEIGHT 1080
-#define sys_exec_vmexits 549
-#define sys_sg_vmexits_printreset 550
 
 static long mmap_freq = 0;
 static long ioctl_freq = 0;
@@ -49,51 +53,6 @@ static double frame_latency = 0.0;
 static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
 static uint64_t execbuf_count = 0;
-static void
-dump_shader_bytes(const char *tag, const void *data)
-{
-    size_t n = 256;   // dump first 64 bytes
-    const unsigned char *p = (const unsigned char*)data;
-
-  fprintf(stderr, "%s: first %zu bytes:", tag, n);
-
-  for (size_t i = 0; i < n; i++) {
-    if (i % 16 == 0)
-      fprintf(stderr, "\n%04zx: ", i);
-    fprintf(stderr, "%02x ", p[i]);
-  }
-  fprintf(stderr, "\n\n");
-}
-#include <GL/gl.h>
-#include <stdio.h>
-
-#include <gbm.h>
-
-#include <gbm.h>
-#include <stdint.h>
-#include <time.h>
-#include <stdint.h>
-#define I915_EXEC_ASYNC (1<<15)
-static inline uint64_t clock_gettime_ns(void)
-{
-    
-    unsigned int lo, hi;
-    asm volatile("lfence; rdtscp" : "=a"(lo), "=d"(hi) :: "memory");
-    return ((uint64_t)hi << 32) | lo;
-}
-
-#include <stdio.h>
-#include <stdint.h>
-
-#define LOG_BATCH_SIZE 100  // Number of entries to hold in memory before flushing
-
-// Structure to hold our raw measurements
-typedef struct {
-    uint64_t req_type;
-    int frame;
-    uint64_t cycles;
-    int ret;
-} log_entry_t;
 
 void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret) {
     static log_entry_t buffer[LOG_BATCH_SIZE];
@@ -125,7 +84,6 @@ void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uin
         current_idx = 0;
     }
 }
-
 void wait_for_batch(int fd, uint32_t handle) {
     struct drm_i915_gem_wait wait = {
         .bo_handle = handle,
@@ -258,25 +216,7 @@ static int create_xcb_fence(check *bufs, int buf_index) {
   return 0; // adil: added a return value
 }
 
-void prefault_range(void *addr, size_t len) {
-  char *p = addr;
 
-    for (size_t off = 0; off < len; off += PAGE_SIZE)
-        memset((void*)(p + off), 0, PAGE_SIZE);
-}
-#include <time.h>
-
-void throttle_listener() {
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 1000000; // 1 millisecond sleep
-    
-    // Adjust the frequency: sleep 1ms every 10 polls
-    static int counter = 0;
-    if (++counter % 10 == 0) {
-        nanosleep(&ts, NULL);
-    }
-}
 void create_and_setup_xcb_window(){
     conn = xcb_connect(NULL, NULL);
     if (xcb_connection_has_error(conn)) { fprintf(stderr,"xcb_connect failed\n"); return; }
