@@ -388,7 +388,6 @@ extern void* mmap_listener(void* arg) {
                     if(c->p2 == 3223872707){
                         struct drm_i915_gem_execbuffer2 *eb2 = (struct drm_i915_gem_execbuffer2 *)(c->p3); /* EXECBUFFER */
                         asm volatile("lfence" ::: "memory");
-                        fprintf(stderr, "DEBUG: eb2->buffers_ptr is %p\n", (void*)eb2->buffers_ptr);
                         struct drm_i915_gem_exec_object2 *obj_list = (struct drm_i915_gem_exec_object2 *)(uintptr_t)eb2->buffers_ptr;
 
                         uint32_t batch_handle;
