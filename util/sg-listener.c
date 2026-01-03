@@ -346,8 +346,8 @@ extern void* mmap_listener(void* arg) {
                 case GEM_ALLOCATION:
                     uint64_t size = c->p2;
                     assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    assert(madvise(gem_slots.host_address, size, MADV_DONTNEED) == 0);
-                    assert(madvise(gem_slots.guest_address, size, MADV_DONTNEED) == 0);
+                    assert(munmap(gem_slots.host_address, size) == 0);
+                    assert(munmap(gem_slots.guest_address, size) == 0);
 
       // Mapping on original offset
       void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
