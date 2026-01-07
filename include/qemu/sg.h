@@ -112,6 +112,7 @@ typedef struct {
     int frame;
     uint64_t cycles;
     int ret;
+    uint64_t flags;
 } log_entry_t;
 
 static void prefault_range(void *addr, size_t len) {

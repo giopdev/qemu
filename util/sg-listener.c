@@ -33,7 +33,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdint.h>
-
+#include <errno.h>
 
 struct timespec ts;
 void *data_region_actual_address = NULL;
@@ -54,7 +54,7 @@ static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
 static uint64_t execbuf_count = 0;
 
-void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret) {
+void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret, uint64_t flags) {
     static log_entry_t buffer[LOG_BATCH_SIZE];
     static int current_idx = 0;
     static FILE *fp = NULL;
@@ -64,6 +64,7 @@ void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uin
     buffer[current_idx].frame = frame_count;
     buffer[current_idx].cycles = end - start;
     buffer[current_idx].ret = ret;
+    buffer[current_idx].flags = flags;
     current_idx++;
 
     // 2. Only hit the disk when the buffer is full
@@ -75,7 +76,11 @@ void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uin
 
         // Write all 100 entries at once
         for (int i = 0; i < LOG_BATCH_SIZE; i++) {
-            fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d\n", 
+            if(buffer[i].flags)
+                fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d; flags: %lu;\n", 
+                    buffer[i].req_type, buffer[i].frame, buffer[i].cycles, buffer[i].ret, buffer[i].flags);
+            else
+                fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d \n", 
                     buffer[i].req_type, buffer[i].frame, buffer[i].cycles, buffer[i].ret);
         }
 
@@ -325,41 +330,57 @@ extern void* mmap_listener(void* arg) {
                     break; 
                 case IOCTL: {
                     uint64_t start,end;
-                    if(c->p2 == 3223872707){
-                        struct drm_i915_gem_execbuffer2 *eb2 = (struct drm_i915_gem_execbuffer2 *)(c->p3); /* EXECBUFFER */
-                        asm volatile("lfence" ::: "memory");
-                        struct drm_i915_gem_exec_object2 *obj_list = (struct drm_i915_gem_exec_object2 *)(uintptr_t)eb2->buffers_ptr;
+                    uint64_t req_type = _IOC_NR(c->p2);
+                    int already_done = 0;
+                    // if (req_type == 195) {
+                    //     struct drm_syncobj_wait *sw = (struct drm_syncobj_wait *)(c->p3);
+                        
+                    //     if (sw->timeout_nsec > 0) {
+                    //         sw->timeout_nsec = 0; // Force non-blocking
+                    //         start = clock_gettime_ns();
 
-                        uint32_t batch_handle;
+                    //         int poll_count = 0;
+                    //         while (1) {
+                    //             ret = ioctl(c->p1, c->p2, (void *)c->p3);
+                    //             if (ret == 0) break;
+                                
+                    //             // Instead of one pause, do a small "sleep-like" spin 
+                    //             // to let the GPU hardware work without being interrupted by the CPU
+                    //             for(int i=0; i<200; i++) {
+                    //                 asm volatile("pause" ::: "memory");
+                    //             }
+                    //             poll_count++;
+                    //         }
+                    //         end = clock_gettime_ns();
+                    //         asm volatile("lfence" ::: "memory");
+                    //         c->ret = ret;
+                    //         c->req_bit = 0;
+                    //         ioctl_freq++;
+                    //         log_latency_buffered(req_type, frame_count, start, end, ret, 0);
+                    //         break;
+                            
+                    //     }
+                    // }
 
-                        if (eb2->flags & I915_EXEC_BATCH_FIRST) {
-                            // If flag is set, it's the first one
-                            batch_handle = obj_list[0].handle;
-                        } else {
-                            // Default: it's the last one in the list
-                            batch_handle = obj_list[eb2->buffer_count - 1].handle;
-                        }
-                        start = clock_gettime_ns();
-                        asm volatile("lfence" ::: "memory");
-                        wait_for_batch(c->p1, batch_handle);
-                        asm volatile("lfence" ::: "memory");
-                        end = clock_gettime_ns();
-                        log_latency_buffered(DRM_IOCTL_I915_GEM_WAIT, frame_count, start, end, ret);
-                    }
 
                     // Now you can use this handle for your test:
                     // wait_for_batch(fd, batch_handle);
                     start = clock_gettime_ns();
                     asm volatile("lfence" ::: "memory");
-                    uint64_t req_type = c->p2;
                     ret = ioctl(c->p1, c->p2, (void *)c->p3);
                     asm volatile("lfence" ::: "memory");
                     end = clock_gettime_ns();
+                    asm volatile("lfence" ::: "memory");
 
                     c->ret = ret;
-                    c->req_bit = 0;
                     ioctl_freq++;
-                    log_latency_buffered(req_type, frame_count, start, end, ret);
+                    if(req_type == 105){
+                        struct drm_i915_gem_execbuffer2 *eb = (struct drm_i915_gem_execbuffer2 *)(c->p3);
+                        log_latency_buffered(req_type, frame_count, start, end, ret, eb->flags);
+                    }
+                    else
+                        log_latency_buffered(req_type, frame_count, start, end, ret, 0);
+                    c->req_bit = 0;
                     break;
                 }
 
