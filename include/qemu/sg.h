@@ -13,7 +13,7 @@
 #include <EGL/eglext.h>
 #include <xcb/xcb.h>
 #include <xcb/sync.h>
-// #define SG_DEBUG
+#define SG_DEBUG
 
 #ifdef SG_DEBUG
 #define log_sg(fmt, ...) \
@@ -105,6 +105,24 @@ static inline uint64_t clock_gettime_ns(void)
     asm volatile("lfence; rdtscp" : "=a"(lo), "=d"(hi) :: "memory");
     return ((uint64_t)hi << 32) | lo;
 }
+
+#define MAX_HANDLES 1024
+#define MASTER_POOL_SIZE 1024*1024*512*2 // 512MB Pool
+
+struct VirtualBuffer {
+    uint32_t game_handle;   // The ID the game thinks it has
+    uint64_t pool_offset;   // Where it actually lives in the big pool
+    uint64_t size;
+    uint64_t flags;         // Original flags (0xd8, 0x5c, etc.)
+};
+#define MAX_REGISTRY_ENTRIES 2048 // SuperTuxKart uses ~101, so 2048 is safe
+struct RegistryEntry {
+    uint32_t fake_handle;
+    uint32_t real_host_handle; // <--- Add this
+    uint64_t pool_slice_offset;
+    uint64_t size;
+    uint64_t fake_mmap_offset;
+};
 
 // Structure to hold our raw measurements
 typedef struct {

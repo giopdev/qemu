@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <errno.h>
-
+#include <stdint.h>
 struct timespec ts;
 void *data_region_actual_address = NULL;
 typedef struct {
@@ -260,12 +260,109 @@ void setup_data(comm_page_t *c) {
   c->ret = 0;
   c->req_bit = 0;
 }
-extern void* mmap_listener(void* arg) {
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(3, &cpuset);
-    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+
+uint32_t master_handle = 0;
+uint64_t next_free_offset = 0;
+static struct RegistryEntry registry[MAX_REGISTRY_ENTRIES];
+static int registry_count = 0;
+
+void init_master_pool(int fd) {
+    static bool initd = false;
+    if (initd) return;
+    struct drm_i915_gem_create create = { .size = MASTER_POOL_SIZE };
+    int ret = ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &create);
+    assert(create.handle);
+    master_handle = create.handle;
+    next_free_offset = 0;
+    struct drm_i915_gem_mmap_offset mmap_arg = {
+        .handle = master_handle,
+        .flags = I915_MMAP_OFFSET_WC // Write-Back caching (standard)
+    };
+    ioctl(fd, DRM_IOCTL_I915_GEM_MMAP_OFFSET, &mmap_arg);
+
+    assert(munmap(gem_slots.host_address, MASTER_POOL_SIZE) == 0);
+    assert(munmap(gem_slots.guest_address, MASTER_POOL_SIZE) == 0);
+
+    void *retptr = mmap(gem_slots.host_address, MASTER_POOL_SIZE, PROT_EXEC | PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, mmap_arg.offset);
+    if (retptr == MAP_FAILED) {
+        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
+        assert(retptr != MAP_FAILED);
+    }
+    assert(retptr == gem_slots.host_address);
+    retptr = mmap(gem_slots.guest_address, MASTER_POOL_SIZE, PROT_EXEC | PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, mmap_arg.offset);
+    if (retptr == MAP_FAILED) {
+        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
+        assert(retptr != MAP_FAILED);
+    }
+    assert(retptr == gem_slots.guest_address);
+
+    initd = true;
+
+}
+int bridge_ioctl_gem_create(int fd, struct drm_i915_gem_create *args) {
+    // 1. Create a REAL shadow object on the host to get a unique identity
+    struct drm_i915_gem_create host_args = { .size = args->size };
+    int ret = ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &host_args);
+    if (ret < 0) return ret;
+
+    int idx = registry_count++;
+    registry[idx].fake_handle = 0x5000 + idx;
+    registry[idx].real_host_handle = host_args.handle; // The unique ID for the host
+    registry[idx].size = args->size;
     
+    // 64KB Alignment for GPU stability
+    uint64_t aligned_size = (args->size + 65535) & ~65535;
+    registry[idx].pool_slice_offset = next_free_offset;
+    registry[idx].fake_mmap_offset = 0x555500000000ULL + (idx * 0x1000);
+
+    next_free_offset += aligned_size;
+
+    args->handle = registry[idx].fake_handle;
+    return 0;
+}
+
+// Inside your ioctl(DRM_IOCTL_I915_GEM_MMAP_OFFSET) wrapper
+int bridge_ioctl_mmap_offset(int fd, struct drm_i915_gem_mmap_offset *args) {
+    for (int i = 0; i < registry_count; i++) {
+        if (registry[i].fake_handle == args->handle) {
+            // Provide our fake cookie
+            args->offset = registry[i].fake_mmap_offset;
+            fprintf(stderr, "Wohoo! Found a match for handle %ld \n", args->handle);
+            return 0; 
+        }
+    }
+    fprintf(stderr, "Oops! Not found a match for handle %ld \n", args->handle);
+    return -ENOENT;
+}
+int bridge_ioctl_execbuffer2(int fd, struct drm_i915_gem_execbuffer2 *exec) {
+    struct drm_i915_gem_exec_object2 *objs = (void*)exec->buffers_ptr;
+
+    for (int i = 0; i < exec->buffer_count; i++) {
+        int found = 0;
+        for (int j = 0; j < registry_count; j++) {
+            if (objs[i].handle == registry[j].fake_handle) {
+                objs[i].handle = registry[j].real_host_handle;
+                objs[i].offset = registry[j].pool_slice_offset;
+                found = 1;
+                break;
+            }
+        }
+
+        // --- THE CRITICAL FIX FOR BUFFER [8] ---
+        if (!found) {
+            // If we don't know this handle, we MUST NOT let it keep 
+            // an offset like 0xffffff...
+            // Force it to a safe, valid alignment in the GTT
+            objs[i].offset = 0x1000000 + (i * 0x10000); 
+            // You might need to create a "dummy" host object for these
+        }
+
+        objs[i].flags |= EXEC_OBJECT_PINNED | EXEC_OBJECT_SUPPORTS_48B_ADDRESS | EXEC_OBJECT_ASYNC;
+        objs[i].relocation_count = 0;
+    }
+    return 0;
+}
+extern void* mmap_listener(void* arg) {
     volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
     while (c->magic != COMM_MAGIC) {
         usleep(1000);
@@ -289,33 +386,22 @@ extern void* mmap_listener(void* arg) {
                     log_sg("SETUP_DATA() is completed");
                     break;
                 case GEM_ALLOCATION:
-                    uint64_t size = c->p2;
-                    assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    assert(munmap(gem_slots.host_address, size) == 0);
-                    assert(munmap(gem_slots.guest_address, size) == 0);
-
-      // Mapping on original offset
-      void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
-                          c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(retptr != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.host_address);
-
-      retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
-                    c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(ret != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.guest_address);
-
-                    c->ret = (uint64_t)gem_slots.guest_address;
-                    pthread_mutex_lock(&gem_slots_lock);
-                        gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                        gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                    pthread_mutex_unlock(&gem_slots_lock);
+                    void *guest_va = NULL;
+                    for (int i = 0; i < registry_count; i++) {
+                        if (registry[i].fake_mmap_offset == (uint64_t)c->p6) {
+                            // MATH: Return the Guest Pointer + Slice Offset
+                            uint64_t slice = registry[i].pool_slice_offset;
+                            guest_va = (void*)((uintptr_t)gem_slots.guest_address + slice);
+                            c->ret = guest_va;
+                            fprintf(stderr, "Found a match for offset addr: %ld\n", guest_va);
+                            break;
+                        }
+                    }
+                    assert(guest_va != NULL);
+                    // pthread_mutex_lock(&gem_slots_lock);
+                    //     gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                    //     gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                    // pthread_mutex_unlock(&gem_slots_lock);
                     c->req_bit = 0;
                     log_sg("mmap() returned: 0x%lx", c->ret);
                     mmap_freq++;
@@ -331,40 +417,111 @@ extern void* mmap_listener(void* arg) {
                 case IOCTL: {
                     uint64_t start,end;
                     uint64_t req_type = _IOC_NR(c->p2);
-                    int already_done = 0;
-                    // if (req_type == 195) {
-                    //     struct drm_syncobj_wait *sw = (struct drm_syncobj_wait *)(c->p3);
+                    if (c->p2 == DRM_IOCTL_I915_GEM_CREATE_EXT || c->p2 == DRM_IOCTL_I915_GEM_CREATE) {
+                        struct drm_i915_gem_create *args = (struct drm_i915_gem_create *)c->p3;
+                        c->ret = bridge_ioctl_gem_create(c->p1, args);
+                        fprintf(stderr, "GEM Create was invoked with size=%ld\n", args->size);
+                        c->req_bit = 0;
+                        break;
+                    }
+
+                    if(c->p2 == DRM_IOCTL_I915_GEM_MMAP_OFFSET){
+                        c->ret = bridge_ioctl_mmap_offset(c->p1, c->p3);
+                        fprintf(stderr, "GEM MMAP Offst was invoked\n");
+                        c->req_bit = 0;
+                        break;
+                    }
+
+                    if(c->p2 == DRM_IOCTL_PRIME_HANDLE_TO_FD) {
+                            struct drm_prime_handle *prime = (void*)c->p3;
+                            int found = 0;
+
+                            for (int i = 0; i < registry_count; i++) {
+                                if (registry[i].fake_handle == prime->handle) {
+                                    // Swap to the REAL shadow handle before calling host
+                                    struct drm_prime_handle real_prime = {
+                                        .handle = registry[i].real_host_handle,
+                                        .flags = prime->flags
+                                    };
+                                    
+                                    // Ask kernel for a real dma-buf FD
+                                    ret = ioctl(c->p1, DRM_IOCTL_PRIME_HANDLE_TO_FD, &real_prime);
+                                    
+                                    prime->fd = real_prime.fd; // Give real FD to game
+                                    c->ret = ret;
+                                    found = 1;
+                                    break;
+                                }
+                            }
+                            if (found) {
+                                c->req_bit = 0;
+                                break;
+                            }
+                            // Fallback for non-intercepted handles
+                            c->ret = ioctl(c->p1, c->p2, (void*)c->p3);
+                            c->req_bit = 0;
+                            break;
+                        }
+
+                    if (c->p2 == DRM_IOCTL_MODE_CREATE_DUMB) { // DRM_IOCTL_MODE_CREATE_DUMB
+                        struct drm_mode_create_dumb *args = (void*)c->p3;
                         
-                    //     if (sw->timeout_nsec > 0) {
-                    //         sw->timeout_nsec = 0; // Force non-blocking
-                    //         start = clock_gettime_ns();
+                        // Calculate size: width * height * (bytes per pixel)
+                        uint32_t pitch = args->width * ((args->bpp + 7) / 8);
+                        uint64_t size = (uint64_t)pitch * args->height;
+                        size = (size + 65535) & ~65535; // 64KB Align
 
-                    //         int poll_count = 0;
-                    //         while (1) {
-                    //             ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    //             if (ret == 0) break;
-                                
-                    //             // Instead of one pause, do a small "sleep-like" spin 
-                    //             // to let the GPU hardware work without being interrupted by the CPU
-                    //             for(int i=0; i<200; i++) {
-                    //                 asm volatile("pause" ::: "memory");
-                    //             }
-                    //             poll_count++;
-                    //         }
-                    //         end = clock_gettime_ns();
-                    //         asm volatile("lfence" ::: "memory");
-                    //         c->ret = ret;
-                    //         c->req_bit = 0;
-                    //         ioctl_freq++;
-                    //         log_latency_buffered(req_type, frame_count, start, end, ret, 0);
-                    //         break;
-                            
-                    //     }
-                    // }
+                        // Use your existing bridge logic to assign a slice
+                        int idx = registry_count++;
+                        registry[idx].fake_handle = 0x10 + idx;
+                        registry[idx].pool_slice_offset = next_free_offset;
+                        registry[idx].size = size;
+                        registry[idx].fake_mmap_offset = 0x555500000000ULL + (idx * 0x1000);
 
+                        next_free_offset += size;
 
-                    // Now you can use this handle for your test:
-                    // wait_for_batch(fd, batch_handle);
+                        // Fill the output fields so the game doesn't crash
+                        args->handle = registry[idx].fake_handle;
+                        args->pitch = pitch;
+                        args->size = size;
+
+                        c->ret = 0; // Success!
+                        c->req_bit = 0;
+                        fprintf(stderr, "[BRIDGE] Faked DUMB_CREATE: %ux%u, Handle %u\n", 
+                                args->width, args->height, args->handle);
+                        break;
+                    }
+
+                    // 3. The DUMB_MAP (Add this here!)
+                    if (c->p2 == DRM_IOCTL_MODE_MAP_DUMB) { // DRM_IOCTL_MODE_MAP_DUMB
+                        struct drm_mode_map_dumb *map_args = (void*)c->p3;
+                        int found = 0;
+                        for (int i = 0; i < registry_count; i++) {
+                            if (registry[i].fake_handle == map_args->handle) {
+                                map_args->offset = registry[i].fake_mmap_offset;
+                                c->ret = 0;
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            fprintf(stderr, "[BRIDGE] DUMB_MAP failed: Handle %u not found\n", map_args->handle);
+                            c->ret = -ENOENT;
+                        }
+                        c->req_bit = 0;
+                        break;
+                    }
+                    if(req_type == 105){
+                        struct drm_i915_gem_execbuffer2 *eb = (struct drm_i915_gem_execbuffer2 *)(c->p3);
+                        bridge_ioctl_execbuffer2(c->p1, eb);
+                        struct drm_i915_gem_exec_object2 *obj = 
+                            (struct drm_i915_gem_exec_object2 *)(uintptr_t)eb->buffers_ptr;
+
+                        for (int i = 0; i < eb->buffer_count; i++) {
+                            fprintf(stderr, "Buffer [%d]: Handle=%u, Flags=0x%llx, Offset=0x%llx\n", 
+                                    i, obj[i].handle, obj[i].flags, obj[i].offset);
+                        }
+                    }
                     start = clock_gettime_ns();
                     asm volatile("lfence" ::: "memory");
                     ret = ioctl(c->p1, c->p2, (void *)c->p3);
@@ -390,6 +547,9 @@ extern void* mmap_listener(void* arg) {
                     c->ret = ret;
                     __sync_synchronize();
                     log_sg("open() returned: %d", ret);
+                    if (strstr(c->p1, "renderD")){
+                        init_master_pool(ret);
+                    }
                     c->req_bit = 0;
                     break;
                 case FCNTL:
@@ -454,8 +614,6 @@ extern void* mmap_listener(void* arg) {
                                         NULL);  
 
                     xcb_flush(conn);
-                    c->req_bit = 0;
-                    log_sg("X11_PRESENT() completed");
                     frame_count++;
                     if (start_frame > 0){
                         clock_gettime(CLOCK_REALTIME, &ts);
@@ -481,9 +639,10 @@ extern void* mmap_listener(void* arg) {
                         fprintf(stderr,
                     "Frame %lu: execbuffers=%" PRIu64 "\n",
                     frame_count, execbuf_count);
-                execbuf_count = 0;
-
+                    execbuf_count = 0;
                     }
+                    c->req_bit = 0;
+                    log_sg("X11_PRESENT() completed");
                     break;
                 case CLOSE:
                     log_sg("close() is called");
