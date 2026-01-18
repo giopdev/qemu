@@ -1,39 +1,30 @@
+#include <stddef.h>
 #define _GNU_SOURCE
 
 #include "qemu/sg.h"
+#include <GL/gl.h>
+#include <X11/xshmfence.h>
 #include <assert.h>
+#include <drm/drm.h>
+#include <drm/i915_drm.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <gbm.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 #include <xcb/dri3.h>
 #include <xcb/present.h>
 #include <xcb/sync.h>
 #include <xcb/xcb.h>
-#include <xcb/dri3.h>
-#include <xcb/present.h>
 #include <xcb/xfixes.h>
-#include <X11/xshmfence.h>
-#include <drm/drm.h>
-#include <drm/i915_drm.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <GL/gl.h>
-#include <stdio.h>
-#include <gbm.h>
-#include <gbm.h>
-#include <stdint.h>
-#include <time.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <errno.h>
 
 struct timespec ts;
 void *data_region_actual_address = NULL;
@@ -54,54 +45,60 @@ static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
 static uint64_t execbuf_count = 0;
 
-void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret, uint64_t flags) {
-    static log_entry_t buffer[LOG_BATCH_SIZE];
-    static int current_idx = 0;
-    static FILE *fp = NULL;
+void log_latency_buffered(uint64_t req_type, int frame_count, uint64_t start,
+                          uint64_t end, int ret, uint64_t flags) {
+  static log_entry_t buffer[LOG_BATCH_SIZE];
+  static int current_idx = 0;
+  static FILE *fp = NULL;
 
-    // 1. Always calculate the delta in memory (High Precision)
-    buffer[current_idx].req_type = req_type;
-    buffer[current_idx].frame = frame_count;
-    buffer[current_idx].cycles = end - start;
-    buffer[current_idx].ret = ret;
-    buffer[current_idx].flags = flags;
-    current_idx++;
+  // 1. Always calculate the delta in memory (High Precision)
+  buffer[current_idx].req_type = req_type;
+  buffer[current_idx].frame = frame_count;
+  buffer[current_idx].cycles = end - start;
+  buffer[current_idx].ret = ret;
+  buffer[current_idx].flags = flags;
+  current_idx++;
 
-    // 2. Only hit the disk when the buffer is full
-    if (current_idx >= LOG_BATCH_SIZE) {
-        if (!fp) {
-            fp = fopen("./logs_ioctl", "a");
-            if (!fp) return;
-        }
-
-        // Write all 100 entries at once
-        for (int i = 0; i < LOG_BATCH_SIZE; i++) {
-            if(buffer[i].flags)
-                fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d; flags: %lu;\n", 
-                    buffer[i].req_type, buffer[i].frame, buffer[i].cycles, buffer[i].ret, buffer[i].flags);
-            else
-                fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d \n", 
-                    buffer[i].req_type, buffer[i].frame, buffer[i].cycles, buffer[i].ret);
-        }
-
-        // Flush to disk and reset buffer index
-        fflush(fp);
-        current_idx = 0;
+  // 2. Only hit the disk when the buffer is full
+  if (current_idx >= LOG_BATCH_SIZE) {
+    if (!fp) {
+      fp = fopen("./logs_ioctl", "a");
+      if (!fp)
+        return;
     }
+
+    // Write all 100 entries at once
+    for (int i = 0; i < LOG_BATCH_SIZE; i++) {
+      if (buffer[i].flags)
+        fprintf(
+            fp,
+            "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d; flags: %lu;\n",
+            buffer[i].req_type, buffer[i].frame, buffer[i].cycles,
+            buffer[i].ret, buffer[i].flags);
+      else
+        fprintf(fp, "IOCTL req: %lu; Frame: %d; cycles: %lu; ret: %d \n",
+                buffer[i].req_type, buffer[i].frame, buffer[i].cycles,
+                buffer[i].ret);
+    }
+
+    // Flush to disk and reset buffer index
+    fflush(fp);
+    current_idx = 0;
+  }
 }
 void wait_for_batch(int fd, uint32_t handle) {
-    struct drm_i915_gem_wait wait = {
-        .bo_handle = handle,
-        .flags = 0,      // Reserved for future use
-        .timeout_ns = -1 // Wait forever (or set a timeout in nanoseconds)
-    };
+  struct drm_i915_gem_wait wait = {
+      .bo_handle = handle,
+      .flags = 0,      // Reserved for future use
+      .timeout_ns = -1 // Wait forever (or set a timeout in nanoseconds)
+  };
 
-    // Call the WAIT IOCTL (3222824052)
-    if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &wait) < 0) {
-        perror("GEM WAIT failed");
-    }
+  // Call the WAIT IOCTL (3222824052)
+  if (ioctl(fd, DRM_IOCTL_I915_GEM_WAIT, &wait) < 0) {
+    perror("GEM WAIT failed");
+  }
 }
-static check* bufs_persistent = NULL;
+static check *bufs_persistent = NULL;
 static pthread_mutex_t gem_slots_lock = PTHREAD_MUTEX_INITIALIZER;
 static void create_pixmap_from_kbuf(check *bufs, int buf_index,
                                     uint32_t size_bytes, uint32_t stride) {
@@ -221,28 +218,29 @@ static int create_xcb_fence(check *bufs, int buf_index) {
   return 0; // adil: added a return value
 }
 
-
-void create_and_setup_xcb_window(){
-    conn = xcb_connect(NULL, NULL);
-    if (xcb_connection_has_error(conn)) { fprintf(stderr,"xcb_connect failed\n"); return; }
-    xcb_screen_t *screen = (xcb_screen_t*)xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
-    win = xcb_generate_id(conn);
-    uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-    uint32_t values[2] = { screen->black_pixel, XCB_EVENT_MASK_EXPOSURE };
-    xcb_create_window(conn, XCB_COPY_FROM_PARENT, win, screen->root,
-                      0,0, WIDTH, HEIGHT, 0,
-                      XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
-                    mask, values);
-                      /* Set window title */
-    const char *title = "XCB Demo Window";
-    xcb_change_property(conn, XCB_PROP_MODE_REPLACE,
-                        win, XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
-                    strlen(title), title);
-    xcb_map_window(conn, win);
-    xcb_flush(conn);
-    // ask for present complete events (optional)
-    xcb_present_select_input(conn, win, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY, 0);
-
+void create_and_setup_xcb_window() {
+  conn = xcb_connect(NULL, NULL);
+  if (xcb_connection_has_error(conn)) {
+    fprintf(stderr, "xcb_connect failed\n");
+    return;
+  }
+  xcb_screen_t *screen =
+      (xcb_screen_t *)xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
+  win = xcb_generate_id(conn);
+  uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+  uint32_t values[2] = {screen->black_pixel, XCB_EVENT_MASK_EXPOSURE};
+  xcb_create_window(conn, XCB_COPY_FROM_PARENT, win, screen->root, 0, 0, WIDTH,
+                    HEIGHT, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                    screen->root_visual, mask, values);
+  /* Set window title */
+  const char *title = "XCB Demo Window";
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, win, XCB_ATOM_WM_NAME,
+                      XCB_ATOM_STRING, 8, strlen(title), title);
+  xcb_map_window(conn, win);
+  xcb_flush(conn);
+  // ask for present complete events (optional)
+  xcb_present_select_input(conn, win, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY,
+                           0);
 }
 void setup_data(comm_page_t *c) {
   log_sg("Data region addr: %p; Host Base address: %p\n", c->p10,
@@ -260,243 +258,120 @@ void setup_data(comm_page_t *c) {
   c->ret = 0;
   c->req_bit = 0;
 }
-extern void* mmap_listener(void* arg) {
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(3, &cpuset);
-    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-    
-    volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
-    while (c->magic != COMM_MAGIC) {
-        usleep(1000);
+
+// ACTUAL STUFF I NEED
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+// /////////////////////////////////////////////////////
+void evict_caches(void *addr, size_t len);
+static inline uint64_t get_ticks(void);
+uint64_t latmem_time_single(void *head, uint64_t loads);
+
+#define TRASH_SIZE (32 * 1024 * 1024)
+static char *global_trash_buffer;
+static volatile uintptr_t latmem_sink;
+size_t lat_mem_len = {0};
+
+void evict_caches(void *addr, size_t len) {
+  // 1. Flush the target range architecturally
+  char *cp = (char *)addr;
+  for (size_t i = 0; i < len; i += 64) {
+    __asm__ __volatile__("clflush (%0)" : : "r"(cp + i) : "memory");
+  }
+  __asm__ __volatile__("mfence" ::: "memory");
+
+  // 2. Trash the cache levels microarchitecturally
+  if (global_trash_buffer) {
+    volatile char sum = 0;
+    for (size_t i = 0; i < TRASH_SIZE; i += 64) {
+      sum += global_trash_buffer[i];
     }
-    fprintf(stderr, "[QEMU] comm ready at 0x%llx\n",
-            (unsigned long long)(uint64_t)(uintptr_t)c);
+    latmem_sink ^= sum;
+  }
 
-    static void *curr_host_addr = NULL;
-    static void *curr_guest_addr = NULL;
-    /*
-     * Event Processing loop
-     */
-    uint64_t ret;
-    for (;;) {
-        switch (c->req_bit) {
-                case LOG_MMAP_EVENT:
-                    break;
-                case SETUP_DATA:
-                    log_sg("SETUP_DATA() is called");
-                    setup_data(c);
-                    log_sg("SETUP_DATA() is completed");
-                    break;
-                case GEM_ALLOCATION:
-                    uint64_t size = c->p2;
-                    assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    assert(munmap(gem_slots.host_address, size) == 0);
-                    assert(munmap(gem_slots.guest_address, size) == 0);
+  __asm__ __volatile__("mfence" ::: "memory");
+}
 
-      // Mapping on original offset
-      void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
-                          c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(retptr != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.host_address);
+static inline uint64_t get_ticks(void) {
+  uint32_t lo, hi;
+  __asm__ __volatile__("lfence\n\t"
+                       "rdtsc\n\t"
+                       "lfence"
+                       : "=a"(lo), "=d"(hi)::"memory");
+  return ((uint64_t)hi << 32) | lo;
+}
 
-      retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
-                    c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(ret != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.guest_address);
+uint64_t latmem_time_single(void *head, uint64_t loads) {
+  void **p = (void **)head;
+  uint64_t t0 = get_ticks();
+  for (uint64_t i = 0; i < loads; i++) {
+    p = (void **)*p;
+  }
+  uint64_t t1 = get_ticks();
+  latmem_sink ^= (uintptr_t)p;
 
-                    c->ret = (uint64_t)gem_slots.guest_address;
-                    pthread_mutex_lock(&gem_slots_lock);
-                        gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                        gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                    pthread_mutex_unlock(&gem_slots_lock);
-                    c->req_bit = 0;
-                    log_sg("mmap() returned: 0x%lx", c->ret);
-                    mmap_freq++;
-                    break;
-                
-                case FSTAT:
-                    log_sg("fstat() is called");
-                    ret = fstat(c->p1, (struct stat*) c->p2);
-                    c->ret = ret;
-                    log_sg("fstat() returned: %d", ret);
-                    c->req_bit = 0;
-                    break; 
-                case IOCTL: {
-                    uint64_t start,end;
-                    uint64_t req_type = _IOC_NR(c->p2);
-                    int already_done = 0;
-                    // if (req_type == 195) {
-                    //     struct drm_syncobj_wait *sw = (struct drm_syncobj_wait *)(c->p3);
-                        
-                    //     if (sw->timeout_nsec > 0) {
-                    //         sw->timeout_nsec = 0; // Force non-blocking
-                    //         start = clock_gettime_ns();
+  // we should evict here too just to be sure that we don't have a case where
+  // data is cached here and not in guest..
+  evict_caches(head, lat_mem_len);
+  return t1 - t0;
+}
 
-                    //         int poll_count = 0;
-                    //         while (1) {
-                    //             ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    //             if (ret == 0) break;
-                                
-                    //             // Instead of one pause, do a small "sleep-like" spin 
-                    //             // to let the GPU hardware work without being interrupted by the CPU
-                    //             for(int i=0; i<200; i++) {
-                    //                 asm volatile("pause" ::: "memory");
-                    //             }
-                    //             poll_count++;
-                    //         }
-                    //         end = clock_gettime_ns();
-                    //         asm volatile("lfence" ::: "memory");
-                    //         c->ret = ret;
-                    //         c->req_bit = 0;
-                    //         ioctl_freq++;
-                    //         log_latency_buffered(req_type, frame_count, start, end, ret, 0);
-                    //         break;
-                            
-                    //     }
-                    // }
+void pin_to_core(int core) {
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(core, &cpuset);
+  if (sched_setaffinity(0, sizeof(cpu_set_t), &cpuset) != 0) {
+    perror("sched_setaffinity");
+    exit(1);
+  }
+}
 
+// LISTENER ------------------------------------------------
+// ---------------------------------------------------------
+extern void *mmap_listener(void *arg) {
 
-                    // Now you can use this handle for your test:
-                    // wait_for_batch(fd, batch_handle);
-                    start = clock_gettime_ns();
-                    asm volatile("lfence" ::: "memory");
-                    ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    asm volatile("lfence" ::: "memory");
-                    end = clock_gettime_ns();
-                    asm volatile("lfence" ::: "memory");
+  volatile comm_page_t *c = (comm_page_t *)(uintptr_t)COMM_ADDR;
 
-                    c->ret = ret;
-                    ioctl_freq++;
-                    if(req_type == 105){
-                        struct drm_i915_gem_execbuffer2 *eb = (struct drm_i915_gem_execbuffer2 *)(c->p3);
-                        log_latency_buffered(req_type, frame_count, start, end, ret, eb->flags);
-                    }
-                    else
-                        log_latency_buffered(req_type, frame_count, start, end, ret, 0);
-                    c->req_bit = 0;
-                    break;
-                }
+  pin_to_core(0);
+  while (c->magic != COMM_MAGIC) {
+    usleep(1000);
+  }
+  global_trash_buffer = malloc(TRASH_SIZE);
+  memset(global_trash_buffer, 0xAA, TRASH_SIZE);
 
-                case OPEN:
-                    log_sg("open() is called: %s", c->p1);
-                    ret = open((const char*) c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    __sync_synchronize();
-                    log_sg("open() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case FCNTL:
-                    log_sg("fcntl() is called");
-                    ret = fcntl(c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("fcntl() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case READLINK:
-                    log_sg("readlink() is called");
-                    ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("readlink() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;  
-                case NEWFSTAT:
-                    log_sg("newfstatat() is called");
-                    ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
-                    c->ret = ret;
-                    log_sg("newfstatat() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case GETDENT:
-                    log_sg("getdent() is called");
-                    ret = syscall(SYS_getdents64, c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("getdent() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case DUP:
-                    log_sg("dup() is called");
-                    ret = dup(c->p1);
-                    c->ret = ret;
-                    log_sg("dup() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case X11_SETUP:
-                    log_sg("X11_SETUP() is called");
-                    create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
-                    create_xcb_fence((check*) c->p1, c->p2);
-                    log_sg("X11_SETUP() completed");
-                    c->req_bit = 0;
-                    // bufs_persistent = c->p1;
-                    break;
-                case X11_PRESENT:
-                    check *tmp_buf = (check *)c->p1;
-                    log_sg("X11_PRESENT() is called\n");
-                    //   xshmfence_trigger(tmp_buf[c->p2].shm_fence);
-                    xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
-                    xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
-                                        0,                         // serial
-                                        XCB_NONE,                  // valid
-                                        XCB_NONE,                  // update
-                                        0, 0,                      // x, y
-                                        XCB_NONE,                  // target_crtc
-                                        tmp_buf[c->p2].sync_fence, // wait_fence
-                                        c->p3,                     // idle_fence
-                                        0,                         // options
-                                        0, 0, 0, // target_msc, divisor, remainder
-                                        0,       // notifies_len
-                                        NULL);  
+  fprintf(stderr, "[QEMU] comm ready at 0x%llx\n",
+          (unsigned long long)(uint64_t)(uintptr_t)c);
 
-                    xcb_flush(conn);
-                    c->req_bit = 0;
-                    log_sg("X11_PRESENT() completed");
-                    frame_count++;
-                    if (start_frame > 0){
-                        clock_gettime(CLOCK_REALTIME, &ts);
-                        double end_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-                        frame_latency += (end_frame - start_frame);
-                    }
-                    if(frame_count == 1){
-                        mmap_freq = 0;
-                        ioctl_freq = 0;
-                        frame_latency = 0.0;
-                        time_spent_in_ioctl = 0;
-                    }
-                    clock_gettime(CLOCK_REALTIME, &ts);
-                    start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-                    if(frame_count%5000 == 0){
-                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                        fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f VMEXITS: NaN\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
-                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                        frame_latency = 0;
-                        ioctl_freq = 0;
-                        mmap_freq = 0;
-                        time_spent_in_ioctl = 0;
-                        fprintf(stderr,
-                    "Frame %lu: execbuffers=%" PRIu64 "\n",
-                    frame_count, execbuf_count);
-                execbuf_count = 0;
-
-                    }
-                    break;
-                case CLOSE:
-                    log_sg("close() is called");
-                    close(c->p1);
-                    log_sg("close() completed");
-                    c->req_bit = 0;
-                    // bufs_persistent = c->p1;
-                    break;
-                default:
-                    // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)c->req_bit);
-                    break;
-            }
-        // throttle_listener();
-        }
-    return NULL;
+  static void *curr_host_addr = NULL;
+  static void *curr_guest_addr = NULL;
+  /*
+   * Event Processing loop
+   */
+  uint64_t ret;
+  for (;;) {
+    switch (c->req_bit) {
+    case 0:
+      // no req
+      break;
+    case SET_LEN:
+      lat_mem_len = (size_t)c->p1;
+      c->req_bit = 0;
+      break;
+    case TIME_MEM:
+      c->ret = latmem_time_single((void *)c->p1, c->p2);
+      c->req_bit = 0;
+      break;
+    default:
+      // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long
+      // long)c->req_bit);
+      break;
+    }
+    // throttle_listener();
+  }
+  return NULL;
 }

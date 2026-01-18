@@ -71,6 +71,8 @@ static const  uint64_t DUP = 11;
 static const  uint64_t X11_SETUP = 12;
 static const  uint64_t X11_PRESENT = 13;
 static const  uint64_t CLOSE = 14;
+static const  uint64_t TIME_MEM = 50;
+static const  uint64_t SET_LEN = 51;
 
 
 // Sizes
