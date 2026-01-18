@@ -20,6 +20,7 @@
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
+#include <x86intrin.h>
 #include <xcb/dri3.h>
 #include <xcb/present.h>
 #include <xcb/sync.h>
@@ -271,21 +272,20 @@ void setup_data(comm_page_t *c) {
 void evict_caches(void *addr, size_t len);
 static inline uint64_t get_ticks(void);
 uint64_t latmem_time_single(void *head, uint64_t loads);
+void pin_to_core(int core);
 
 #define TRASH_SIZE (32 * 1024 * 1024)
 static char *global_trash_buffer;
 static volatile uintptr_t latmem_sink;
 size_t lat_mem_len = {0};
+void *lat_mem_addr = {0};
 
 void evict_caches(void *addr, size_t len) {
-  // 1. Flush the target range architecturally
   char *cp = (char *)addr;
   for (size_t i = 0; i < len; i += 64) {
     __asm__ __volatile__("clflush (%0)" : : "r"(cp + i) : "memory");
   }
-  __asm__ __volatile__("mfence" ::: "memory");
 
-  // 2. Trash the cache levels microarchitecturally
   if (global_trash_buffer) {
     volatile char sum = 0;
     for (size_t i = 0; i < TRASH_SIZE; i += 64) {
@@ -293,31 +293,26 @@ void evict_caches(void *addr, size_t len) {
     }
     latmem_sink ^= sum;
   }
-
   __asm__ __volatile__("mfence" ::: "memory");
 }
 
-static inline uint64_t get_ticks(void) {
-  uint32_t lo, hi;
-  __asm__ __volatile__("lfence\n\t"
-                       "rdtsc\n\t"
-                       "lfence"
-                       : "=a"(lo), "=d"(hi)::"memory");
-  return ((uint64_t)hi << 32) | lo;
-}
+static inline uint64_t time_single_access(void **p_ptr) {
+  uint64_t t0, t1;
+  void *next_p;
 
-uint64_t latmem_time_single(void *head, uint64_t loads) {
-  void **p = (void **)head;
-  uint64_t t0 = get_ticks();
-  for (uint64_t i = 0; i < loads; i++) {
-    p = (void **)*p;
-  }
-  uint64_t t1 = get_ticks();
-  latmem_sink ^= (uintptr_t)p;
+  _mm_lfence();
+  t0 = __rdtsc();
+  _mm_lfence();
 
-  // we should evict here too just to be sure that we don't have a case where
-  // data is cached here and not in guest..
-  evict_caches(head, lat_mem_len);
+  next_p = *p_ptr;
+
+  _mm_lfence();
+  t1 = __rdtsc();
+  _mm_lfence();
+
+  latmem_sink ^= (uintptr_t)next_p;
+
+  evict_caches(lat_mem_addr, lat_mem_len);
   return t1 - t0;
 }
 
@@ -359,11 +354,12 @@ extern void *mmap_listener(void *arg) {
       // no req
       break;
     case SET_LEN:
-      lat_mem_len = (size_t)c->p1;
+      lat_mem_addr = (void *)c->p1;
+      lat_mem_len = (size_t)c->p2;
       c->req_bit = 0;
       break;
     case TIME_MEM:
-      c->ret = latmem_time_single((void *)c->p1, c->p2);
+      c->ret = time_single_access((void **)c->p1);
       c->req_bit = 0;
       break;
     default:
