@@ -270,49 +270,55 @@ void setup_data(comm_page_t *c) {
 // /////////////////////////////////////////////////////
 // /////////////////////////////////////////////////////
 void evict_caches(void *addr, size_t len);
-static inline uint64_t get_ticks(void);
-uint64_t latmem_time_single(void *head, uint64_t loads);
+static inline uint64_t time_single_access(void *p_ptr);
 void pin_to_core(int core);
 
 #define TRASH_SIZE (32 * 1024 * 1024)
-static char *global_trash_buffer;
-static volatile uintptr_t latmem_sink;
-size_t lat_mem_len = {0};
-void *lat_mem_addr = {0};
+static uint8_t *global_trash_buffer;
+static volatile uint8_t latmem_sink;
+
+size_t lat_mem_len = 0;
+void *lat_mem_addr = NULL;
 
 void evict_caches(void *addr, size_t len) {
-  char *cp = (char *)addr;
+  if (!addr || len == 0)
+    return;
+
+  uint8_t *cp = (uint8_t *)addr;
   for (size_t i = 0; i < len; i += 64) {
-    __asm__ __volatile__("clflush (%0)" : : "r"(cp + i) : "memory");
+    _mm_clflush(cp + i);
   }
 
   if (global_trash_buffer) {
-    volatile char sum = 0;
+    volatile uint8_t sum = 0;
     for (size_t i = 0; i < TRASH_SIZE; i += 64) {
       sum += global_trash_buffer[i];
     }
     latmem_sink ^= sum;
   }
-  __asm__ __volatile__("mfence" ::: "memory");
+  _mm_mfence();
 }
 
-static inline uint64_t time_single_access(void **p_ptr) {
+static inline uint64_t time_single_access(void *p_ptr) {
   uint64_t t0, t1;
-  void *next_p;
+  uint8_t val;
+
+  // Use raw pointer access instead of pointer-to-pointer
+  uint8_t *target = (uint8_t *)p_ptr;
 
   _mm_lfence();
   t0 = __rdtsc();
   _mm_lfence();
 
-  next_p = *p_ptr;
+  val = *target;
 
   _mm_lfence();
   t1 = __rdtsc();
   _mm_lfence();
 
-  latmem_sink ^= (uintptr_t)next_p;
-
+  latmem_sink ^= val;
   evict_caches(lat_mem_addr, lat_mem_len);
+
   return t1 - t0;
 }
 
@@ -329,29 +335,26 @@ void pin_to_core(int core) {
 // LISTENER ------------------------------------------------
 // ---------------------------------------------------------
 extern void *mmap_listener(void *arg) {
-
   volatile comm_page_t *c = (comm_page_t *)(uintptr_t)COMM_ADDR;
 
   pin_to_core(0);
+
   while (c->magic != COMM_MAGIC) {
-    usleep(1000);
+    __builtin_ia32_pause();
   }
+
   global_trash_buffer = malloc(TRASH_SIZE);
   memset(global_trash_buffer, 0xAA, TRASH_SIZE);
 
   fprintf(stderr, "[QEMU] comm ready at 0x%llx\n",
-          (unsigned long long)(uint64_t)(uintptr_t)c);
+          (unsigned long long)(uintptr_t)c);
 
-  static void *curr_host_addr = NULL;
-  static void *curr_guest_addr = NULL;
-  /*
-   * Event Processing loop
-   */
-  uint64_t ret;
   for (;;) {
-    switch (c->req_bit) {
+    uint64_t req = c->req_bit;
+
+    switch (req) {
     case 0:
-      // no req
+      __builtin_ia32_pause();
       break;
     case SET_LEN:
       lat_mem_addr = (void *)c->p1;
@@ -359,15 +362,12 @@ extern void *mmap_listener(void *arg) {
       c->req_bit = 0;
       break;
     case TIME_MEM:
-      c->ret = time_single_access((void **)c->p1);
+      c->ret = time_single_access((void *)c->p1);
       c->req_bit = 0;
       break;
     default:
-      // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long
-      // long)c->req_bit);
       break;
     }
-    // throttle_listener();
   }
   return NULL;
 }
