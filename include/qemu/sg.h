@@ -91,8 +91,8 @@ static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
 
 void* mmap_listener(void* arg);
 
-#define WIDTH 1920
-#define HEIGHT 1080
+#define WIDTH 1280
+#define HEIGHT 720
 #define sys_exec_vmexits 549
 #define sys_sg_vmexits_printreset 550
 #define I915_EXEC_ASYNC (1<<15)

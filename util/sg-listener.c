@@ -365,21 +365,22 @@ extern void* mmap_listener(void* arg) {
 
                     // Now you can use this handle for your test:
                     // wait_for_batch(fd, batch_handle);
-                    start = clock_gettime_ns();
-                    asm volatile("lfence" ::: "memory");
+                    // start = clock_gettime_ns();
+                    // asm volatile("lfence" ::: "memory");
                     ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    asm volatile("lfence" ::: "memory");
-                    end = clock_gettime_ns();
-                    asm volatile("lfence" ::: "memory");
+                    // asm volatile("lfence" ::: "memory");
+                    // end = clock_gettime_ns();
+                    // asm volatile("lfence" ::: "memory");
 
                     c->ret = ret;
                     ioctl_freq++;
-                    if(req_type == 105){
-                        struct drm_i915_gem_execbuffer2 *eb = (struct drm_i915_gem_execbuffer2 *)(c->p3);
-                        log_latency_buffered(req_type, frame_count, start, end, ret, eb->flags);
-                    }
-                    else
-                        log_latency_buffered(req_type, frame_count, start, end, ret, 0);
+                    // if(req_type == 195){
+                    //     struct drm_syncobj_wait *eb = (struct drm_syncobj_wait *)(c->p3);
+                    //     eb->timeout_nsec = 0;
+                    //     // log_latency_buffered(req_type, frame_count, start, end, ret, eb->flags);
+                    // }
+                    // else
+                    //     log_latency_buffered(req_type, frame_count, start, end, ret, 0);
                     c->req_bit = 0;
                     break;
                 }
@@ -446,7 +447,7 @@ extern void* mmap_listener(void* arg) {
                                         XCB_NONE,                  // update
                                         0, 0,                      // x, y
                                         XCB_NONE,                  // target_crtc
-                                        tmp_buf[c->p2].sync_fence, // wait_fence
+                                        0, // wait_fence
                                         c->p3,                     // idle_fence
                                         0,                         // options
                                         0, 0, 0, // target_msc, divisor, remainder
