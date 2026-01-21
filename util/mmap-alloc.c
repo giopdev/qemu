@@ -34,8 +34,10 @@
 #include <linux/magic.h>
 #endif
 
-static const size_t LOW_OFFSET_INTO_MEMORY = 0x100000ULL;           // 1MB
-static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
+// static const size_t LOW_OFFSET_INTO_MEMORY = 0x100000ULL;           // 1MB
+// static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
+static const size_t LOW_OFFSET_INTO_MEMORY = 0x40000000ULL;           // 1MB
+static const void *VIRTUAL_ADDRESS_LOW = (void*)0x40000000ULL;        // 1MB
 static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
 static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
 void *global_ram_address = NULL;
@@ -219,6 +221,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         map_sync_flags = MAP_SYNC | MAP_SHARED_VALIDATE;
     }
 
+    printf("mmap_activate: ptr=%p; size=%ld; FD=%d; offset=%ld; flags=0x%x\n",
+           ptr, size, fd, map_offset, flags | map_sync_flags);
     activated_ptr = mmap(ptr, size, prot, flags | map_sync_flags, fd,
                          map_offset);
     char *proc_link = g_strdup_printf("/proc/self/fd/%d", fd);
@@ -262,10 +266,10 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         if(qemu_map_flags & QEMU_MAP_SHARED){
             // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
             if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
-                printf("Low mapping..\n");
                 size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
                 off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
                 void *want = (void *)VIRTUAL_ADDRESS_LOW;
+                printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
                 void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
                 if (lowShadow == MAP_FAILED){
@@ -275,10 +279,10 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
 
             // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
             if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
-                printf("high mapping..\n");
                 size_t length = size - HIGH_OFFSET_INTO_MEMORY;
                 off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
                 void *want = (void *)VIRTUAL_ADDRESS_HIGH;
+                printf("high mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
                 void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
                 if(highShadow == MAP_FAILED){
@@ -288,13 +292,13 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         }
 
         // After ram is mapped, spawn mmap listener thread
-        if (!mmap_listen_thr_started) {
-            mmap_listen_thr_started = 1;
-            pthread_attr_t attr;
-            pthread_attr_init(&attr);
-            pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
-            pthread_attr_destroy(&attr);
-        }
+        // if (!mmap_listen_thr_started) {
+        //     mmap_listen_thr_started = 1;
+        //     pthread_attr_t attr;
+        //     pthread_attr_init(&attr);
+        //     pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
+        //     pthread_attr_destroy(&attr);
+        // }
         global_ram_address = activated_ptr;
     }else {
     // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
@@ -321,6 +325,7 @@ void *qemu_ram_mmap(int fd,
                     off_t map_offset)
 {
     const size_t guard_pagesize = mmap_guard_pagesize(fd);
+    printf("qemu_ram_mmap: page size (%lx)\n", qemu_fd_getpagesize(fd));
     size_t offset, total;
     void *ptr, *guardptr;
 
