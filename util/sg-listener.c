@@ -269,13 +269,7 @@ void setup_data(comm_page_t *c) {
 //   c->req_bit = 0;
 }
 
-extern void* mmap_listener(void* arg) {
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(3, &cpuset);
-    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-    
-    volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
+void setup_comm_data_regions(volatile comm_page_t *c) {
     while (c->magic != COMM_MAGIC) {
         usleep(1000);
     }
@@ -293,9 +287,6 @@ extern void* mmap_listener(void* arg) {
     log_always("DATA REGION: (guest=%p, host=%p)\n",
             (void*)(uint64_t)DATA_REGION, data_region_actual_address);
 
-    // fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
-    // fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
-
     while (*((uint64_t *)data_region_actual_address) != 0x1234567812344678ULL) {
         usleep(1000);
     }
@@ -304,11 +295,56 @@ extern void* mmap_listener(void* arg) {
     gem_slots.host_address = ((uint64_t)data_region_actual_address);
     gem_slots.guest_address = ((uint64_t)DATA_REGION);
     create_and_setup_xcb_window();
+    log_always("XCB window created\n");
+
     c->ret = 0;
+    __sync_synchronize();
     c->req_bit = 0;
+}
+
+extern void* mmap_listener(void* arg) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(3, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+    
+    volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
+    setup_comm_data_regions(c);
+
+    // while (c->magic != COMM_MAGIC) {
+    //     usleep(1000);
+    // }
+    // log_always("COMM: 0x%llx\n",
+    //         (unsigned long long)(uint64_t)(uintptr_t)c);
+    // log_always("COMM MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
+
+    // volatile comm_page_t* d = (comm_page_t*)(uintptr_t)DATA_REGION;
+    // while (d->magic != 0x1234567812344678ULL) {
+    //     usleep(1000);
+    // }
+    // data_region_actual_address = (void *)((uint64_t)global_ram_address);
+
+    // log_always("DATA MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
+    // log_always("DATA REGION: (guest=%p, host=%p)\n",
+    //         (void*)(uint64_t)DATA_REGION, data_region_actual_address);
+
+    // // fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
+    // // fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
+
+    // while (*((uint64_t *)data_region_actual_address) != 0x1234567812344678ULL) {
+    //     usleep(1000);
+    // }
+    // *((uint64_t *)data_region_actual_address) = 0x2;
+
+    // gem_slots.host_address = ((uint64_t)data_region_actual_address);
+    // gem_slots.guest_address = ((uint64_t)DATA_REGION);
+    // create_and_setup_xcb_window();
+    // c->ret = 0;
+    // c->req_bit = 0;
 
     static void *curr_host_addr = NULL;
     static void *curr_guest_addr = NULL;
+
     /*
      * Event Processing loop
      */
