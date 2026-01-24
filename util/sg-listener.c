@@ -54,6 +54,10 @@ static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
 static uint64_t execbuf_count = 0;
 
+static check* bufs_persistent = NULL;
+static pthread_mutex_t gem_slots_lock = PTHREAD_MUTEX_INITIALIZER;
+
+
 void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uint64_t end, int ret, uint64_t flags) {
     static log_entry_t buffer[LOG_BATCH_SIZE];
     static int current_idx = 0;
@@ -89,6 +93,7 @@ void log_latency_buffered(uint64_t req_type,int frame_count, uint64_t start, uin
         current_idx = 0;
     }
 }
+
 void wait_for_batch(int fd, uint32_t handle) {
     struct drm_i915_gem_wait wait = {
         .bo_handle = handle,
@@ -101,75 +106,71 @@ void wait_for_batch(int fd, uint32_t handle) {
         perror("GEM WAIT failed");
     }
 }
-static check* bufs_persistent = NULL;
-static pthread_mutex_t gem_slots_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static void create_pixmap_from_kbuf(check *bufs, int buf_index,
                                     uint32_t size_bytes, uint32_t stride) {
-  /*
-      [pid 111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=7,
-     revents=POLLIN|POLLOUT}]) [pid 111638] recvmsg(7, {msg_name=NULL,
-     msg_namelen=0,
-     msg_iov=[{iov_base="\f\0\3\0\0\0\300\4\0\0\0\0\200\2\340\1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-     iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
-     111638] writev(7,
-     [{iov_base="\224\3\4\0\0\0\300\4\2\0\0\0\0\0\0\0b\0\3\0\4\0\0\0DRI3",
-     iov_len=28}], 1) = 28 [pid 111638] poll([{fd=7, events=POLLIN}], 1, -1) = 1
-     ([{fd=7, revents=POLLIN}]) [pid 111638] recvmsg(7, {msg_name=NULL,
-     msg_namelen=0,
-     msg_iov=[{iov_base="\0\3\4\0\2\0\0\0\3\0\224\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-     iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
-     111638] poll([{fd=7, events=POLLIN}], 1, -1) = 1 ([{fd=7, revents=POLLIN}])
-      [pid 111638] recvmsg(7, {msg_name=NULL, msg_namelen=0,
-     msg_iov=[{iov_base="\1\0\5\0\0\0\0\0\1\225\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
-     iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
-     111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=7,
-     revents=POLLOUT}]) [pid 111638] sendmsg(7, {msg_name=NULL, msg_namelen=0,
-     msg_iov=[{iov_base="\225\2\6\0\1\0\300\4\0\0\300\4\0\300\22\0\200\2\340\1\0\n\30
-     ", iov_len=24}], msg_iovlen=1, msg_control=[{cmsg_len=20,
-     cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}],
-     msg_controllen=20, msg_flags=0}, 0) = 24 [pid 111638] close(9)
-  */
-  /*
-      XCB does not call the ioctl(5, DRM_IOCTL_PRIME_FD_TO_HANDLE,
-     0x7ffee2ec01fc)
-  */
-  bufs[buf_index].pixmap = xcb_generate_id(conn);
-  xcb_void_cookie_t cookie = xcb_dri3_pixmap_from_buffer(
-      conn, bufs[buf_index].pixmap, win, size_bytes, WIDTH, HEIGHT, stride, 24,
-      32, bufs[buf_index].bo_fd);
-  // Takes the ownership of the GPU buffer. and hands over pixmap as the
-  // identifier
-
-  xcb_flush(conn);
-
-  xcb_generic_error_t *err = xcb_request_check(conn, cookie);
-
-  if (err) {
-    fprintf(stderr,
-            "DRI3 pixmap_from_buffer failed:"
-            " error_code=%u, major=%u, minor=%u\n",
-            err->error_code, err->major_code, err->minor_code);
-    free(err);
-    return; // or handle the error however you need
-  }
-
-  fprintf(stderr, "PIXMAP: %d for index: %d\n", bufs[buf_index].pixmap,
-          buf_index);
+    /*
+        [pid 111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=7,
+        revents=POLLIN|POLLOUT}]) [pid 111638] recvmsg(7, {msg_name=NULL,
+        msg_namelen=0,
+        msg_iov=[{iov_base="\f\0\3\0\0\0\300\4\0\0\0\0\200\2\340\1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
+        111638] writev(7,
+        [{iov_base="\224\3\4\0\0\0\300\4\2\0\0\0\0\0\0\0b\0\3\0\4\0\0\0DRI3",
+        iov_len=28}], 1) = 28 [pid 111638] poll([{fd=7, events=POLLIN}], 1, -1) = 1
+        ([{fd=7, revents=POLLIN}]) [pid 111638] recvmsg(7, {msg_name=NULL,
+        msg_namelen=0,
+        msg_iov=[{iov_base="\0\3\4\0\2\0\0\0\3\0\224\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
+        111638] poll([{fd=7, events=POLLIN}], 1, -1) = 1 ([{fd=7, revents=POLLIN}])
+        [pid 111638] recvmsg(7, {msg_name=NULL, msg_namelen=0,
+        msg_iov=[{iov_base="\1\0\5\0\0\0\0\0\1\225\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        iov_len=4096}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 32 [pid
+        111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) = 1 ([{fd=7,
+        revents=POLLOUT}]) [pid 111638] sendmsg(7, {msg_name=NULL, msg_namelen=0,
+        msg_iov=[{iov_base="\225\2\6\0\1\0\300\4\0\0\300\4\0\300\22\0\200\2\340\1\0\n\30
+        ", iov_len=24}], msg_iovlen=1, msg_control=[{cmsg_len=20,
+        cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}],
+        msg_controllen=20, msg_flags=0}, 0) = 24 [pid 111638] close(9)
+    */
+    /*
+        XCB does not call the ioctl(5, DRM_IOCTL_PRIME_FD_TO_HANDLE,
+        0x7ffee2ec01fc)
+    */
+    bufs[buf_index].pixmap = xcb_generate_id(conn);
+    xcb_void_cookie_t cookie = xcb_dri3_pixmap_from_buffer(
+        conn, bufs[buf_index].pixmap, win, size_bytes, WIDTH, HEIGHT, stride, 24,
+        32, bufs[buf_index].bo_fd);
+    
+    // Takes the ownership of the GPU buffer. and hands over pixmap as the
+    // identifier
+    xcb_flush(conn);
+    xcb_generic_error_t *err = xcb_request_check(conn, cookie);
+    if (err) {
+        fprintf(stderr,
+                "DRI3 pixmap_from_buffer failed:"
+                " error_code=%u, major=%u, minor=%u\n",
+                err->error_code, err->major_code, err->minor_code);
+        free(err);
+        return; // or handle the error however you need
+    }
+    log_always("PIXMAP: %d (index=%d)\n", bufs[buf_index].pixmap,
+            buf_index);
 }
 
 static int create_xcb_fence(check *bufs, int buf_index) {
   /*
-      [pid 111638] memfd_create("xshmfence", MFD_CLOEXEC|MFD_ALLOW_SEALING) = 9
-      [pid 111638] ftruncate(9, 4)            = 0
-      [pid 111638] mmap(NULL, 4, PROT_READ|PROT_WRITE, MAP_SHARED, 9, 0) =
-     0x7a2aa2cbf000 [pid 111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) =
-     1 ([{fd=7, revents=POLLOUT}]) [pid 111638] sendmsg(7, {msg_name=NULL,
-     msg_namelen=0, msg_iov=[{iov_base="\225\4\4\0\1\0\300\4\2\0\300\4\0\0\0\0",
-     iov_len=16}], msg_iovlen=1, msg_control=[{cmsg_len=20,
-     cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}],
-     msg_controllen=20, msg_flags=0}, 0) = 16 [pid 111638] close(9) = 0
-
+    [pid 111638] memfd_create("xshmfence", MFD_CLOEXEC|MFD_ALLOW_SEALING) = 9
+    [pid 111638] ftruncate(9, 4)            = 0
+    [pid 111638] mmap(NULL, 4, PROT_READ|PROT_WRITE, MAP_SHARED, 9, 0) =
+    0x7a2aa2cbf000 [pid 111638] poll([{fd=7, events=POLLIN|POLLOUT}], 1, -1) =
+    1 ([{fd=7, revents=POLLOUT}]) [pid 111638] sendmsg(7, {msg_name=NULL,
+    msg_namelen=0, msg_iov=[{iov_base="\225\4\4\0\1\0\300\4\2\0\300\4\0\0\0\0",
+    iov_len=16}], msg_iovlen=1, msg_control=[{cmsg_len=20,
+    cmsg_level=SOL_SOCKET, cmsg_type=SCM_RIGHTS, cmsg_data=[9]}],
+    msg_controllen=20, msg_flags=0}, 0) = 16 [pid 111638] close(9) = 0
   */
+
   /* Create an xshmfence and register it as an X sync fence for this pixmap */
   bufs[buf_index].shm_fence_fd = xshmfence_alloc_shm(); // ----- (1)
   if (bufs[buf_index].shm_fence_fd < 0) {
@@ -190,13 +191,11 @@ static int create_xcb_fence(check *bufs, int buf_index) {
       bufs[buf_index].shm_fence_fd);
 
   /*
-      Logic:
-          1: Gets the memfd from (1)
-          2: Maps to our process using mmap (xshmfence_map_shm)
-          3: identifier for the fence is sync_fence (X11 allocated)
-          4: Transfers ownership of the fd to the X11. and closes the fd inside
-     process.
-
+    Logic:
+        1: Gets the memfd from (1)
+        2: Maps to our process using mmap (xshmfence_map_shm)
+        3: identifier for the fence is sync_fence (X11 allocated)
+        4: Transfers ownership of the fd to the X11. and closes the fd inside process.
   */
   xcb_flush(conn);
 
@@ -240,33 +239,10 @@ void create_and_setup_xcb_window(){
                     strlen(title), title);
     xcb_map_window(conn, win);
     xcb_flush(conn);
+
     // ask for present complete events (optional)
     xcb_present_select_input(conn, win, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY, 0);
 
-}
-void setup_data(comm_page_t *c) {
-  fprintf(stderr, "Data region addr: %p; Host Base address: %p\n", c->p10,
-         global_ram_address);
-  fflush(stderr);
-//   uint64_t data_start = c->p10;
-// //   data_region_actual_address =
-// //       (void *)((uint64_t)(-2 * 1024 * 1024 * 1024 /* Offset: Ref gio's diag */ +
-// //                           data_start) +
-// //                (uint64_t)global_ram_address);
-//   data_region_actual_address = (void *)((uint64_t)global_ram_address);
-//   fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
-//   fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
-
-//   while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
-//     usleep(1000);
-//  }
-
-//   gem_slots.host_address = ((uint64_t)data_region_actual_address);
-//   gem_slots.guest_address = ((uint64_t)data_start);
-//   // sleep(10000000000);
-//   create_and_setup_xcb_window();
-//   c->ret = 0;
-//   c->req_bit = 0;
 }
 
 void setup_comm_data_regions(volatile comm_page_t *c) {
@@ -303,44 +279,15 @@ void setup_comm_data_regions(volatile comm_page_t *c) {
 }
 
 extern void* mmap_listener(void* arg) {
+    /* TODO: Is this really needed? */
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(3, &cpuset);
     pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
     
+    /* Setup the communications and data regions */
     volatile comm_page_t* c = (comm_page_t*)(uintptr_t)COMM_ADDR;
     setup_comm_data_regions(c);
-
-    // while (c->magic != COMM_MAGIC) {
-    //     usleep(1000);
-    // }
-    // log_always("COMM: 0x%llx\n",
-    //         (unsigned long long)(uint64_t)(uintptr_t)c);
-    // log_always("COMM MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
-
-    // volatile comm_page_t* d = (comm_page_t*)(uintptr_t)DATA_REGION;
-    // while (d->magic != 0x1234567812344678ULL) {
-    //     usleep(1000);
-    // }
-    // data_region_actual_address = (void *)((uint64_t)global_ram_address);
-
-    // log_always("DATA MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
-    // log_always("DATA REGION: (guest=%p, host=%p)\n",
-    //         (void*)(uint64_t)DATA_REGION, data_region_actual_address);
-
-    // // fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
-    // // fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
-
-    // while (*((uint64_t *)data_region_actual_address) != 0x1234567812344678ULL) {
-    //     usleep(1000);
-    // }
-    // *((uint64_t *)data_region_actual_address) = 0x2;
-
-    // gem_slots.host_address = ((uint64_t)data_region_actual_address);
-    // gem_slots.guest_address = ((uint64_t)DATA_REGION);
-    // create_and_setup_xcb_window();
-    // c->ret = 0;
-    // c->req_bit = 0;
 
     static void *curr_host_addr = NULL;
     static void *curr_guest_addr = NULL;
@@ -353,9 +300,7 @@ extern void* mmap_listener(void* arg) {
         switch (c->req_bit) {
             case LOG_MMAP_EVENT:
                 break;
-            case SETUP_DATA:
-                setup_data(c);
-                break;
+
             case GEM_ALLOCATION:
                 uint64_t size = c->p2;
                 log_gem("size: 0x%lx, host: 0x%lx, guest: 0x%lx\n", size, gem_slots.host_address, gem_slots.guest_address);
