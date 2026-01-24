@@ -38,7 +38,7 @@
 // static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
 static const void *VIRTUAL_ADDRESS_LOW = (void*)0x200000ULL;        // 2MB
 static const void *VIRTUAL_ADDRESS_MED = (void*)0x100000000ULL;        // 4GB
-static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x140000000ULL;    // 5GB
+static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x180000000ULL;    // 6GB
 
 static const size_t LOW_OFFSET_INTO_MEMORY = 0x40000000ULL;           // 1MB
 // static const void *VIRTUAL_ADDRESS_LOW = (void*)0x40000000ULL;        // 1MB

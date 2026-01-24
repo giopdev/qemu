@@ -248,25 +248,25 @@ void setup_data(comm_page_t *c) {
   fprintf(stderr, "Data region addr: %p; Host Base address: %p\n", c->p10,
          global_ram_address);
   fflush(stderr);
-  uint64_t data_start = c->p10;
-//   data_region_actual_address =
-//       (void *)((uint64_t)(-2 * 1024 * 1024 * 1024 /* Offset: Ref gio's diag */ +
-//                           data_start) +
-//                (uint64_t)global_ram_address);
-  data_region_actual_address = (void *)((uint64_t)global_ram_address);
-  fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
-  fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
+//   uint64_t data_start = c->p10;
+// //   data_region_actual_address =
+// //       (void *)((uint64_t)(-2 * 1024 * 1024 * 1024 /* Offset: Ref gio's diag */ +
+// //                           data_start) +
+// //                (uint64_t)global_ram_address);
+//   data_region_actual_address = (void *)((uint64_t)global_ram_address);
+//   fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
+//   fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
 
-  while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
-    usleep(1000);
- }
+//   while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
+//     usleep(1000);
+//  }
 
-  gem_slots.host_address = ((uint64_t)data_region_actual_address);
-  gem_slots.guest_address = ((uint64_t)data_start);
-  // sleep(10000000000);
-  create_and_setup_xcb_window();
-  c->ret = 0;
-  c->req_bit = 0;
+//   gem_slots.host_address = ((uint64_t)data_region_actual_address);
+//   gem_slots.guest_address = ((uint64_t)data_start);
+//   // sleep(10000000000);
+//   create_and_setup_xcb_window();
+//   c->ret = 0;
+//   c->req_bit = 0;
 }
 
 extern void* mmap_listener(void* arg) {
@@ -283,9 +283,8 @@ extern void* mmap_listener(void* arg) {
             (unsigned long long)(uint64_t)(uintptr_t)c);
     fprintf(stderr, "COMM region MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
 
-
     volatile comm_page_t* d = (comm_page_t*)(uintptr_t)DATA_REGION;
-    while (d->magic != COMM_MAGIC) {
+    while (d->magic != 0x1234567812344678ULL) {
         usleep(1000);
     }
     fprintf(stderr, "DATA region MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
@@ -294,9 +293,11 @@ extern void* mmap_listener(void* arg) {
     fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
     fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
 
-    while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
+    while (*((uint64_t *)data_region_actual_address) != 0x1234567812344678ULL) {
         usleep(1000);
     }
+    *((uint64_t *)data_region_actual_address) = 0x2;
+    // memset(data_region_actual_address, 0, 64); // Clear the region
 
     gem_slots.host_address = ((uint64_t)data_region_actual_address);
     gem_slots.guest_address = ((uint64_t)DATA_REGION);
@@ -420,8 +421,14 @@ extern void* mmap_listener(void* arg) {
                 }
 
                 case OPEN:
-                    log_sg("open() is called: %s", c->p1);
+                    // log_sg("open() is called (%s)", (const char*) c->p1);
+                    // fprintf(stderr, "[QEMU] filename address: %p %s\n", (void*) c->p1, (char*) c->p1);
                     ret = open((const char*) c->p1, c->p2, c->p3);
+                    if (ret < 0) {
+                        fprintf(stderr, "[QEMU] open failed in sg-listener\n");
+                        perror("open");
+                    }
+                    fprintf(stderr, "[QEMU] open() fd: %d\n", ret);
                     c->ret = ret;
                     __sync_synchronize();
                     log_sg("open() returned: %d", ret);
