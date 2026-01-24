@@ -245,7 +245,7 @@ void create_and_setup_xcb_window(){
 
 }
 void setup_data(comm_page_t *c) {
-  log_sg("Data region addr: %p; Host Base address: %p\n", c->p10,
+  fprintf(stderr, "Data region addr: %p; Host Base address: %p\n", c->p10,
          global_ram_address);
   fflush(stderr);
   uint64_t data_start = c->p10;
@@ -254,7 +254,13 @@ void setup_data(comm_page_t *c) {
 //                           data_start) +
 //                (uint64_t)global_ram_address);
   data_region_actual_address = (void *)((uint64_t)global_ram_address);
-  log_sg("Data region actual addr: %p\n", data_region_actual_address);
+  fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
+  fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
+
+  while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
+    usleep(1000);
+ }
+
   gem_slots.host_address = ((uint64_t)data_region_actual_address);
   gem_slots.guest_address = ((uint64_t)data_start);
   // sleep(10000000000);
@@ -262,6 +268,7 @@ void setup_data(comm_page_t *c) {
   c->ret = 0;
   c->req_bit = 0;
 }
+
 extern void* mmap_listener(void* arg) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -274,6 +281,7 @@ extern void* mmap_listener(void* arg) {
     }
     fprintf(stderr, "[QEMU] comm ready at 0x%llx\n",
             (unsigned long long)(uint64_t)(uintptr_t)c);
+    fprintf(stderr, "COMM region MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
 
     static void *curr_host_addr = NULL;
     static void *curr_guest_addr = NULL;

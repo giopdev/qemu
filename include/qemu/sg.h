@@ -29,6 +29,9 @@
 
 extern void* data_region_actual_address;
 extern void* global_ram_address;
+extern void* global_ram1_address;
+extern void* global_ram2_address;
+extern void* global_ram3_address;
 typedef struct {
     volatile uint64_t magic;
     volatile uint64_t req_bit;
@@ -83,9 +86,11 @@ static const  size_t PAGE_SIZE    = 4*1024;
 
 // static void* DATA_REGION = (void*)0x100008000ULL;
 static void* DATA_REGION = (void*)0x100000000ULL;
+static void* DATA_HOST_OFFSET = (void*)0x80000000ULL;
+
 // This is different than where it appears in the guest.
 // Qemu maps the ram region from 0x80000000 into the allocation to 0x100000000 in the guest AS
-static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
+// static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
 
 static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
 

@@ -46,6 +46,9 @@ static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
 // static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
 // static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x140000000ULL;    // 5GB
 void *global_ram_address = NULL;
+void *global_ram1_address = NULL;
+void *global_ram2_address = NULL;
+void *global_ram3_address = NULL;
 
 static pthread_t mmap_listen_thr;
 static int mmap_listen_thr_started = 0;
@@ -273,7 +276,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         fprintf(stderr, "First DIMM mmap activated at %p size %ld\n",
                 activated_ptr, size);
         if(qemu_map_flags & QEMU_MAP_SHARED){
-            size_t length = 4*1024*1024*1024ULL - 2*1024*1024; // 4GB - 2MB
+            size_t length = 2*1024*1024*1024ULL - 2*1024*1024; // 2GB - 2MB
             off_t offset = map_offset + (off_t)2*1024*1024;
             void *want = (void *) VIRTUAL_ADDRESS_LOW;
             printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
@@ -283,6 +286,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
                 perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
             }
         }
+        global_ram1_address = activated_ptr;
         dimm_counter++;
         
     } else if (dimm_counter == 1) {
@@ -290,7 +294,9 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         fprintf(stderr, "Second DIMM mmap activated at %p size %ld\n",
                 activated_ptr, size);
         if(qemu_map_flags & QEMU_MAP_SHARED){
-            size_t length = 1*1024*1024*1024ULL; // 4GB - 2MB
+            // QEMU does not map 2GB-4GB region (MMIO/PCIe space.)
+            size_t length = 2*1024*1024*1024ULL; // 4GB - 5GB
+            fprintf(stderr, "offset for MEDIUM mmap: %ld\n", map_offset);
             off_t offset = map_offset;
             void *want = (void *) VIRTUAL_ADDRESS_MED;
             printf("Medium mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
@@ -303,13 +309,14 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         
         // This should be the global ram address (used by sg-listener)
         global_ram_address = activated_ptr;
+        global_ram2_address = activated_ptr;
         dimm_counter++;
     } else if (dimm_counter == 2) {
         fprintf(stderr, "----------------------\n");
         fprintf(stderr, "Third DIMM mmap activated at %p size %ld\n",
                 activated_ptr, size);
         if(qemu_map_flags & QEMU_MAP_SHARED){
-            size_t length = size - 5*1024*1024*1024ULL; // total_size - 5GB
+            size_t length = size - 4*1024*1024*1024ULL; // total_size - 5GB
             off_t offset = map_offset;
             void *want = (void *) VIRTUAL_ADDRESS_HIGH;
             printf("High mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
@@ -329,6 +336,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
             pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
             pthread_attr_destroy(&attr);
         }
+        global_ram3_address = activated_ptr;
 
         dimm_counter++;
     }
@@ -400,7 +408,7 @@ void *qemu_ram_mmap(int fd,
                     off_t map_offset)
 {
     const size_t guard_pagesize = mmap_guard_pagesize(fd);
-    printf("qemu_ram_mmap: page size (%lx)\n", qemu_fd_getpagesize(fd));
+    // printf("qemu_ram_mmap: page size (%lx)\n", qemu_fd_getpagesize(fd));
     size_t offset, total;
     void *ptr, *guardptr;
 
