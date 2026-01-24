@@ -271,15 +271,19 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         activated_ptr = mmap(ptr, size, prot, flags, fd, map_offset);
     }
 
+    /* TODO: This hardcodes the three DIMM logic. */
     if (dimm_counter == 0) {
-        fprintf(stderr, "----------------------\n");
-        fprintf(stderr, "First DIMM mmap activated at %p size %ld\n",
-                activated_ptr, size);
+        log_always("\n========BACKEND-SETUP\n");
+        log_always("========DIMM1========\n");
         if(qemu_map_flags & QEMU_MAP_SHARED){
             size_t length = 2*1024*1024*1024ULL - 2*1024*1024; // 2GB - 2MB
+            log_always("[native] %p -- %p\n", 
+            activated_ptr, 
+            (void *)((uintptr_t)activated_ptr + length));
+
             off_t offset = map_offset + (off_t)2*1024*1024;
             void *want = (void *) VIRTUAL_ADDRESS_LOW;
-            printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+            log_always("[identity] %p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
             void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
             if (lowShadow == MAP_FAILED){
@@ -290,16 +294,17 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         dimm_counter++;
         
     } else if (dimm_counter == 1) {
-        fprintf(stderr, "----------------------\n");
-        fprintf(stderr, "Second DIMM mmap activated at %p size %ld\n",
-                activated_ptr, size);
+        log_always("========DIMM2========\n");
         if(qemu_map_flags & QEMU_MAP_SHARED){
             // QEMU does not map 2GB-4GB region (MMIO/PCIe space.)
-            size_t length = 2*1024*1024*1024ULL; // 4GB - 5GB
-            fprintf(stderr, "offset for MEDIUM mmap: %ld\n", map_offset);
+            size_t length = 2*1024*1024*1024ULL; // 4GB - 2GB
+            log_always("[native] %p -- %p\n", 
+            activated_ptr, 
+            (void *)((uintptr_t)activated_ptr + length));
+            
             off_t offset = map_offset;
             void *want = (void *) VIRTUAL_ADDRESS_MED;
-            printf("Medium mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+            log_always("[identity] %p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
             void *medShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
             if (medShadow == MAP_FAILED){
@@ -312,23 +317,25 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         global_ram2_address = activated_ptr;
         dimm_counter++;
     } else if (dimm_counter == 2) {
-        fprintf(stderr, "----------------------\n");
-        fprintf(stderr, "Third DIMM mmap activated at %p size %ld\n",
-                activated_ptr, size);
+        log_always("========DIMM3========\n");
         if(qemu_map_flags & QEMU_MAP_SHARED){
             size_t length = size - 4*1024*1024*1024ULL; // total_size - 5GB
+            log_always("[native] %p -- %p\n", 
+            activated_ptr, 
+            (void *)((uintptr_t)activated_ptr + length));
+
             off_t offset = map_offset;
             void *want = (void *) VIRTUAL_ADDRESS_HIGH;
-            printf("High mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+            log_always("[identity] %p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
             void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
             if (highShadow == MAP_FAILED){
                 perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
             }
         }
-        fprintf(stderr, "----------------------\n");
 
         // After ram is mapped, spawn mmap listener thread
+        log_always("[*] Spawing mmap listener thread \n");
         if (!mmap_listen_thr_started) {
             mmap_listen_thr_started = 1;
             pthread_attr_t attr;
@@ -338,13 +345,14 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         }
         global_ram3_address = activated_ptr;
 
+        log_always("========BACKEND-SETUP\n\n");
         dimm_counter++;
     }
 
 
     // Heuristic, we're always assuming fd = 11 for ram
     if(strstr(file_name, "/memfd:memory-backend-memfd")){
-        printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
+        // printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
         
         // if(qemu_map_flags & QEMU_MAP_SHARED){
         //     // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]

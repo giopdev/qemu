@@ -216,7 +216,7 @@ static int create_xcb_fence(check *bufs, int buf_index) {
     return 1;
   }
 
-  fprintf(stderr, "All done from XCB side for index: %d\n", buf_index);
+  log_always("XCB setup completed (index=%d)\n", buf_index);
   return 0; // adil: added a return value
 }
 
