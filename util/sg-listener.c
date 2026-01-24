@@ -297,7 +297,6 @@ extern void* mmap_listener(void* arg) {
         usleep(1000);
     }
     *((uint64_t *)data_region_actual_address) = 0x2;
-    // memset(data_region_actual_address, 0, 64); // Clear the region
 
     gem_slots.host_address = ((uint64_t)data_region_actual_address);
     gem_slots.guest_address = ((uint64_t)DATA_REGION);
@@ -313,230 +312,190 @@ extern void* mmap_listener(void* arg) {
     uint64_t ret;
     for (;;) {
         switch (c->req_bit) {
-                case LOG_MMAP_EVENT:
-                    break;
-                case SETUP_DATA:
-                    setup_data(c);
-                    break;
-                case GEM_ALLOCATION:
-                    uint64_t size = c->p2;
-                    log_gem("size: 0x%lx, host: 0x%lx, guest: 0x%lx\n", size, gem_slots.host_address, gem_slots.guest_address);
+            case LOG_MMAP_EVENT:
+                break;
+            case SETUP_DATA:
+                setup_data(c);
+                break;
+            case GEM_ALLOCATION:
+                uint64_t size = c->p2;
+                log_gem("size: 0x%lx, host: 0x%lx, guest: 0x%lx\n", size, gem_slots.host_address, gem_slots.guest_address);
 
-                    // Unmapping previous mapping (and asserts)
-                    assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    assert(munmap(gem_slots.host_address, size) == 0);
-                    assert(munmap(gem_slots.guest_address, size) == 0);
+                // Unmapping previous mapping (and asserts)
+                assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
+                assert(munmap(gem_slots.host_address, size) == 0);
+                assert(munmap(gem_slots.guest_address, size) == 0);
 
-                    // Mapping on original offset
-                    void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
-                                        c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-                    if (retptr == MAP_FAILED) {
-                        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
-                        assert(retptr != MAP_FAILED);
-                    }
-                    assert(retptr == gem_slots.host_address);
-
-                    retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
+                // Mapping on original offset
+                void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
                                     c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-                    if (retptr == MAP_FAILED) {
-                        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
-                        assert(ret != MAP_FAILED);
-                    }
-                    assert(retptr == gem_slots.guest_address);
-
-                    c->ret = (uint64_t)gem_slots.guest_address;
-                    pthread_mutex_lock(&gem_slots_lock);
-                        gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                        gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
-                    pthread_mutex_unlock(&gem_slots_lock);
-                    c->req_bit = 0;
-                    log_sg("mmap() returned: 0x%lx", c->ret);
-                    mmap_freq++;
-                    break;
-                
-                case FSTAT:
-                    log_sg("fstat() is called");
-                    ret = fstat(c->p1, (struct stat*) c->p2);
-                    c->ret = ret;
-                    log_sg("fstat() returned: %d", ret);
-                    c->req_bit = 0;
-                    break; 
-                case IOCTL: {
-                    uint64_t start,end;
-                    uint64_t req_type = _IOC_NR(c->p2);
-                    int already_done = 0;
-                    // if (req_type == 195) {
-                    //     struct drm_syncobj_wait *sw = (struct drm_syncobj_wait *)(c->p3);
-                        
-                    //     if (sw->timeout_nsec > 0) {
-                    //         sw->timeout_nsec = 0; // Force non-blocking
-                    //         start = clock_gettime_ns();
-
-                    //         int poll_count = 0;
-                    //         while (1) {
-                    //             ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    //             if (ret == 0) break;
-                                
-                    //             // Instead of one pause, do a small "sleep-like" spin 
-                    //             // to let the GPU hardware work without being interrupted by the CPU
-                    //             for(int i=0; i<200; i++) {
-                    //                 asm volatile("pause" ::: "memory");
-                    //             }
-                    //             poll_count++;
-                    //         }
-                    //         end = clock_gettime_ns();
-                    //         asm volatile("lfence" ::: "memory");
-                    //         c->ret = ret;
-                    //         c->req_bit = 0;
-                    //         ioctl_freq++;
-                    //         log_latency_buffered(req_type, frame_count, start, end, ret, 0);
-                    //         break;
-                            
-                    //     }
-                    // }
-
-
-                    // Now you can use this handle for your test:
-                    // wait_for_batch(fd, batch_handle);
-                    // start = clock_gettime_ns();
-                    // asm volatile("lfence" ::: "memory");
-                    ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                    // asm volatile("lfence" ::: "memory");
-                    // end = clock_gettime_ns();
-                    // asm volatile("lfence" ::: "memory");
-
-                    c->ret = ret;
-                    ioctl_freq++;
-                    // if(req_type == 195){
-                    //     struct drm_syncobj_wait *eb = (struct drm_syncobj_wait *)(c->p3);
-                    //     eb->timeout_nsec = 0;
-                    //     // log_latency_buffered(req_type, frame_count, start, end, ret, eb->flags);
-                    // }
-                    // else
-                    //     log_latency_buffered(req_type, frame_count, start, end, ret, 0);
-                    c->req_bit = 0;
-                    break;
+                if (retptr == MAP_FAILED) {
+                    perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
+                    assert(retptr != MAP_FAILED);
                 }
+                assert(retptr == gem_slots.host_address);
 
-                case OPEN:
-                    // log_sg("open() is called (%s)", (const char*) c->p1);
-                    // fprintf(stderr, "[QEMU] filename address: %p %s\n", (void*) c->p1, (char*) c->p1);
-                    ret = open((const char*) c->p1, c->p2, c->p3);
-                    if (ret < 0) {
-                        fprintf(stderr, "[QEMU] open failed in sg-listener\n");
-                        perror("open");
-                    }
-                    fprintf(stderr, "[QEMU] open() fd: %d\n", ret);
-                    c->ret = ret;
-                    __sync_synchronize();
-                    log_sg("open() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case FCNTL:
-                    log_sg("fcntl() is called");
-                    ret = fcntl(c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("fcntl() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case READLINK:
-                    log_sg("readlink() is called");
-                    ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("readlink() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;  
-                case NEWFSTAT:
-                    log_sg("newfstatat() is called");
-                    ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
-                    c->ret = ret;
-                    log_sg("newfstatat() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case GETDENT:
-                    log_sg("getdent() is called");
-                    ret = syscall(SYS_getdents64, c->p1, c->p2, c->p3);
-                    c->ret = ret;
-                    log_sg("getdent() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case DUP:
-                    log_sg("dup() is called");
-                    ret = dup(c->p1);
-                    c->ret = ret;
-                    log_sg("dup() returned: %d", ret);
-                    c->req_bit = 0;
-                    break;
-                case X11_SETUP:
-                    log_sg("X11_SETUP() is called");
-                    create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
-                    create_xcb_fence((check*) c->p1, c->p2);
-                    log_sg("X11_SETUP() completed");
-                    c->req_bit = 0;
-                    // bufs_persistent = c->p1;
-                    break;
-                case X11_PRESENT:
-                    check *tmp_buf = (check *)c->p1;
-                    log_sg("X11_PRESENT() is called\n");
-                    //   xshmfence_trigger(tmp_buf[c->p2].shm_fence);
-                    xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
-                    xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
-                                        0,                         // serial
-                                        XCB_NONE,                  // valid
-                                        XCB_NONE,                  // update
-                                        0, 0,                      // x, y
-                                        XCB_NONE,                  // target_crtc
-                                        0, // wait_fence
-                                        c->p3,                     // idle_fence
-                                        0,                         // options
-                                        0, 0, 0, // target_msc, divisor, remainder
-                                        0,       // notifies_len
-                                        NULL);  
+                retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
+                                c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                if (retptr == MAP_FAILED) {
+                    perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
+                    assert(ret != MAP_FAILED);
+                }
+                assert(retptr == gem_slots.guest_address);
 
-                    xcb_flush(conn);
-                    c->req_bit = 0;
-                    log_sg("X11_PRESENT() completed");
-                    frame_count++;
-                    if (start_frame > 0){
-                        clock_gettime(CLOCK_REALTIME, &ts);
-                        double end_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-                        frame_latency += (end_frame - start_frame);
-                    }
-                    if(frame_count == 1){
-                        mmap_freq = 0;
-                        ioctl_freq = 0;
-                        frame_latency = 0.0;
-                        time_spent_in_ioctl = 0;
-                    }
+                c->ret = (uint64_t)gem_slots.guest_address;
+                pthread_mutex_lock(&gem_slots_lock);
+                    gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                    gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
+                pthread_mutex_unlock(&gem_slots_lock);
+                c->req_bit = 0;
+                log_sg("mmap() returned: 0x%lx", c->ret);
+                mmap_freq++;
+                break;
+            
+            case FSTAT:
+                log_sg("fstat() is called");
+                ret = fstat(c->p1, (struct stat*) c->p2);
+                c->ret = ret;
+                log_sg("fstat() returned: %d", ret);
+                c->req_bit = 0;
+                break; 
+                
+            case IOCTL: {
+                uint64_t start,end;
+                uint64_t req_type = _IOC_NR(c->p2);
+                int already_done = 0;
+                ret = ioctl(c->p1, c->p2, (void *)c->p3);
+                c->ret = ret;
+                ioctl_freq++;
+                c->req_bit = 0;
+                break;
+            }
+
+            case OPEN:
+                log_sg("open() is called (%s)", (const char*) c->p1);
+                ret = open((const char*) c->p1, c->p2, c->p3);
+                if (ret < 0) {
+                    fprintf(stderr, "[QEMU] open failed in sg-listener\n");
+                    perror("open");
+                }
+                c->ret = ret;
+                __sync_synchronize();
+                log_sg("open() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case FCNTL:
+                log_sg("fcntl() is called");
+                ret = fcntl(c->p1, c->p2, c->p3);
+                c->ret = ret;
+                log_sg("fcntl() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case READLINK:
+                log_sg("readlink() is called");
+                ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
+                c->ret = ret;
+                log_sg("readlink() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case NEWFSTAT:
+                log_sg("newfstatat() is called");
+                ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
+                c->ret = ret;
+                log_sg("newfstatat() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case GETDENT:
+                log_sg("getdent() is called");
+                ret = syscall(SYS_getdents64, c->p1, c->p2, c->p3);
+                c->ret = ret;
+                log_sg("getdent() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case DUP:
+                log_sg("dup() is called");
+                ret = dup(c->p1);
+                c->ret = ret;
+                log_sg("dup() returned: %d", ret);
+                c->req_bit = 0;
+                break;
+
+            case X11_SETUP:
+                log_sg("X11_SETUP() is called");
+                create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
+                create_xcb_fence((check*) c->p1, c->p2);
+                log_sg("X11_SETUP() completed");
+                c->req_bit = 0;
+                break;
+
+            case X11_PRESENT:
+                check *tmp_buf = (check *)c->p1;
+                log_sg("X11_PRESENT() is called\n");
+                //   xshmfence_trigger(tmp_buf[c->p2].shm_fence);
+                xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
+                xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
+                                    0,                         // serial
+                                    XCB_NONE,                  // valid
+                                    XCB_NONE,                  // update
+                                    0, 0,                      // x, y
+                                    XCB_NONE,                  // target_crtc
+                                    0, // wait_fence
+                                    c->p3,                     // idle_fence
+                                    0,                         // options
+                                    0, 0, 0, // target_msc, divisor, remainder
+                                    0,       // notifies_len
+                                    NULL);  
+
+                xcb_flush(conn);
+                c->req_bit = 0;
+                log_sg("X11_PRESENT() completed");
+                frame_count++;
+                if (start_frame > 0){
                     clock_gettime(CLOCK_REALTIME, &ts);
-                    start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-                    if(frame_count%5000 == 0){
-                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                        fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f VMEXITS: NaN\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
-                        fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                        frame_latency = 0;
-                        ioctl_freq = 0;
-                        mmap_freq = 0;
-                        time_spent_in_ioctl = 0;
-                        fprintf(stderr,
+                    double end_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+                    frame_latency += (end_frame - start_frame);
+                }
+                if(frame_count == 1){
+                    mmap_freq = 0;
+                    ioctl_freq = 0;
+                    frame_latency = 0.0;
+                    time_spent_in_ioctl = 0;
+                }
+                clock_gettime(CLOCK_REALTIME, &ts);
+                start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+                if(frame_count%5000 == 0){
+                    fprintf(stderr, "------------------SG STATS-----------------------------\n");
+                    fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f VMEXITS: NaN\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
+                    fprintf(stderr, "------------------SG STATS-----------------------------\n");
+                    frame_latency = 0;
+                    ioctl_freq = 0;
+                    mmap_freq = 0;
+                    time_spent_in_ioctl = 0;
+                    fprintf(stderr,
                     "Frame %lu: execbuffers=%" PRIu64 "\n",
                     frame_count, execbuf_count);
-                execbuf_count = 0;
+                    execbuf_count = 0;
 
-                    }
-                    break;
-                case CLOSE:
-                    log_sg("close() is called");
-                    close(c->p1);
-                    log_sg("close() completed");
-                    c->req_bit = 0;
-                    // bufs_persistent = c->p1;
-                    break;
-                default:
-                    // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)c->req_bit);
-                    break;
-            }
-        // throttle_listener();
+                }
+                break;
+
+            case CLOSE:
+                log_sg("close() is called");
+                close(c->p1);
+                log_sg("close() completed");
+                c->req_bit = 0;
+                // bufs_persistent = c->p1;
+                break;
+
+            default:
+                // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)c->req_bit);
+                break;
         }
+    }
     return NULL;
 }
