@@ -273,7 +273,8 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
 
     /* TODO: This hardcodes the three DIMM logic. */
     if (dimm_counter == 0) {
-        log_always("\n========BACKEND-SETUP\n");
+        log_always("\n");
+        log_always("========BACKEND-SETUP\n");
         log_always("========DIMM1========\n");
         if(qemu_map_flags & QEMU_MAP_SHARED){
             size_t length = 2*1024*1024*1024ULL - 2*1024*1024; // 2GB - 2MB
@@ -349,51 +350,6 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         dimm_counter++;
     }
 
-
-    // Heuristic, we're always assuming fd = 11 for ram
-    if(strstr(file_name, "/memfd:memory-backend-memfd")){
-        // printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
-        
-        // if(qemu_map_flags & QEMU_MAP_SHARED){
-        //     // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
-        //     if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
-        //         size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
-        //         off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
-        //         void *want = (void *)VIRTUAL_ADDRESS_LOW;
-        //         printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
-
-        //         void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
-        //         if (lowShadow == MAP_FAILED){
-        //             perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
-        //         }
-        //     }
-
-        //     // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
-        //     if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
-        //         size_t length = size - HIGH_OFFSET_INTO_MEMORY;
-        //         off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
-        //         void *want = (void *)VIRTUAL_ADDRESS_HIGH;
-        //         printf("high mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
-
-        //         void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
-        //         if(highShadow == MAP_FAILED){
-        //             perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
-        //         }
-        //     }
-        // }
-
-        // After ram is mapped, spawn mmap listener thread
-        // if (!mmap_listen_thr_started) {
-        //     mmap_listen_thr_started = 1;
-        //     pthread_attr_t attr;
-        //     pthread_attr_init(&attr);
-        //     pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
-        //     pthread_attr_destroy(&attr);
-        // }
-        // global_ram_address = activated_ptr;
-    }else {
-    // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
-    }
     g_free(proc_link);
     g_free(file_name);
     return activated_ptr;
