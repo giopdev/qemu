@@ -17,6 +17,7 @@
 /* Uncomment to enable debugging */
 // #define COMMAND_DEBUG
 // #define GEM_DEBUG
+// #define STAT_DEBUG
 
 #ifdef COMMAND_DEBUG
 #define log_sg(fmt, ...) \
@@ -38,11 +39,22 @@
 #define log_gem(fmt, ...) do {} while (0)
 #endif
 
+#ifdef STAT_DEBUG
+#define log_stat(fmt, ...) \
+    do { \
+        fprintf(stderr, "(qemu: STAT) "); \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
+    } while (0)
+#else
+#define log_stat(fmt, ...) do {} while (0)
+#endif
+
 #define log_always(fmt, ...) \
     do { \
         fprintf(stderr, "(qemu) "); \
         fprintf(stderr, fmt, ##__VA_ARGS__); \
     } while (0)
+
 
 extern void* data_region_actual_address;
 extern void* global_ram_address;

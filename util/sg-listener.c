@@ -485,16 +485,11 @@ extern void* mmap_listener(void* arg) {
                 clock_gettime(CLOCK_REALTIME, &ts);
                 start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
                 if(frame_count%5000 == 0){
-                    fprintf(stderr, "------------------SG STATS-----------------------------\n");
-                    fprintf(stderr, "Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f VMEXITS: NaN\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
-                    fprintf(stderr, "------------------SG STATS-----------------------------\n");
+                    log_stat("Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
                     frame_latency = 0;
                     ioctl_freq = 0;
                     mmap_freq = 0;
                     time_spent_in_ioctl = 0;
-                    fprintf(stderr,
-                    "Frame %lu: execbuffers=%" PRIu64 "\n",
-                    frame_count, execbuf_count);
                     execbuf_count = 0;
 
                 }
