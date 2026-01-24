@@ -348,7 +348,10 @@ extern void* mmap_listener(void* arg) {
                     gem_slots.host_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
                     gem_slots.guest_address += PAGE_SIZE * (int)((PAGE_SIZE + size) / PAGE_SIZE);
                 pthread_mutex_unlock(&gem_slots_lock);
+                
+                __sync_synchronize();
                 c->req_bit = 0;
+                
                 log_sg("mmap() returned: 0x%lx", c->ret);
                 mmap_freq++;
                 break;
@@ -358,6 +361,8 @@ extern void* mmap_listener(void* arg) {
                 ret = fstat(c->p1, (struct stat*) c->p2);
                 c->ret = ret;
                 log_sg("fstat() returned: %d", ret);
+
+                __sync_synchronize();
                 c->req_bit = 0;
                 break; 
                 
@@ -368,6 +373,8 @@ extern void* mmap_listener(void* arg) {
                 ret = ioctl(c->p1, c->p2, (void *)c->p3);
                 c->ret = ret;
                 ioctl_freq++;
+                
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
             }
@@ -380,8 +387,8 @@ extern void* mmap_listener(void* arg) {
                     perror("open");
                 }
                 c->ret = ret;
-                __sync_synchronize();
                 log_sg("open() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -390,6 +397,7 @@ extern void* mmap_listener(void* arg) {
                 ret = fcntl(c->p1, c->p2, c->p3);
                 c->ret = ret;
                 log_sg("fcntl() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -398,6 +406,7 @@ extern void* mmap_listener(void* arg) {
                 ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
                 c->ret = ret;
                 log_sg("readlink() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -406,6 +415,7 @@ extern void* mmap_listener(void* arg) {
                 ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
                 c->ret = ret;
                 log_sg("newfstatat() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -414,6 +424,7 @@ extern void* mmap_listener(void* arg) {
                 ret = syscall(SYS_getdents64, c->p1, c->p2, c->p3);
                 c->ret = ret;
                 log_sg("getdent() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -422,6 +433,7 @@ extern void* mmap_listener(void* arg) {
                 ret = dup(c->p1);
                 c->ret = ret;
                 log_sg("dup() returned: %d", ret);
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -430,6 +442,7 @@ extern void* mmap_listener(void* arg) {
                 create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
                 create_xcb_fence((check*) c->p1, c->p2);
                 log_sg("X11_SETUP() completed");
+                __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
@@ -488,6 +501,7 @@ extern void* mmap_listener(void* arg) {
                 log_sg("close() is called");
                 close(c->p1);
                 log_sg("close() completed");
+                __sync_synchronize();
                 c->req_bit = 0;
                 // bufs_persistent = c->p1;
                 break;
