@@ -316,16 +316,14 @@ extern void* mmap_listener(void* arg) {
                 case LOG_MMAP_EVENT:
                     break;
                 case SETUP_DATA:
-                    log_sg("SETUP_DATA() is called");
                     setup_data(c);
-                    log_sg("SETUP_DATA() is completed");
                     break;
                 case GEM_ALLOCATION:
                     uint64_t size = c->p2;
+                    log_gem("size: 0x%lx, host: 0x%lx, guest: 0x%lx\n", size, gem_slots.host_address, gem_slots.guest_address);
+
+                    // Unmapping previous mapping (and asserts)
                     assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
-                    fprintf(stderr, "[QEMU-HOST] GEM_ALLOCATION of size: 0x%lx\n", size);
-                    fprintf(stderr, "[QEMU-HOST] Mapping at host address: 0x%lx\n", gem_slots.host_address);
-                    fprintf(stderr, "[QEMU-GUEST] Mapping at guest address: 0x%lx\n", gem_slots.guest_address);
                     assert(munmap(gem_slots.host_address, size) == 0);
                     assert(munmap(gem_slots.guest_address, size) == 0);
 

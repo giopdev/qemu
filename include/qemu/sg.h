@@ -13,17 +13,29 @@
 #include <EGL/eglext.h>
 #include <xcb/xcb.h>
 #include <xcb/sync.h>
-// #define SG_DEBUG
 
-#ifdef SG_DEBUG
+/* Uncomment to enable debugging */
+// #define COMMAND_DEBUG
+// #define GEM_DEBUG
+
+#ifdef COMMAND_DEBUG
 #define log_sg(fmt, ...) \
     do { \
-        printf("[SG] +++++++++++++++\n"); \
-        printf(fmt, ##__VA_ARGS__); \
-        printf("\n[SG] +++++++++++++++\n"); \
+        fprintf(stderr, "[qemu: COMMAND] "); \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
     } while (0)
 #else
 #define log_sg(fmt, ...) do {} while (0)
+#endif
+
+#ifdef GEM_DEBUG
+#define log_gem(fmt, ...) \
+    do { \
+        fprintf(stderr, "[qemu: GEM] "); \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
+    } while (0)
+#else
+#define log_gem(fmt, ...) do {} while (0)
 #endif
 
 
