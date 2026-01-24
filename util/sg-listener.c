@@ -279,19 +279,22 @@ extern void* mmap_listener(void* arg) {
     while (c->magic != COMM_MAGIC) {
         usleep(1000);
     }
-    fprintf(stderr, "[QEMU] comm ready at 0x%llx\n",
+    log_always("COMM: 0x%llx\n",
             (unsigned long long)(uint64_t)(uintptr_t)c);
-    fprintf(stderr, "COMM region MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
+    log_always("COMM MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
 
     volatile comm_page_t* d = (comm_page_t*)(uintptr_t)DATA_REGION;
     while (d->magic != 0x1234567812344678ULL) {
         usleep(1000);
     }
-    fprintf(stderr, "DATA region MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
-
     data_region_actual_address = (void *)((uint64_t)global_ram_address);
-    fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
-    fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
+
+    log_always("DATA MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
+    log_always("DATA REGION: (guest=%p, host=%p)\n",
+            (void*)(uint64_t)DATA_REGION, data_region_actual_address);
+
+    // fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
+    // fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
 
     while (*((uint64_t *)data_region_actual_address) != 0x1234567812344678ULL) {
         usleep(1000);

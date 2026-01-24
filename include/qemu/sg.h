@@ -21,7 +21,7 @@
 #ifdef COMMAND_DEBUG
 #define log_sg(fmt, ...) \
     do { \
-        fprintf(stderr, "[qemu: COMMAND] "); \
+        fprintf(stderr, "(qemu: COMMAND) "); \
         fprintf(stderr, fmt, ##__VA_ARGS__); \
     } while (0)
 #else
@@ -31,13 +31,18 @@
 #ifdef GEM_DEBUG
 #define log_gem(fmt, ...) \
     do { \
-        fprintf(stderr, "[qemu: GEM] "); \
+        fprintf(stderr, "(qemu: GEM) "); \
         fprintf(stderr, fmt, ##__VA_ARGS__); \
     } while (0)
 #else
 #define log_gem(fmt, ...) do {} while (0)
 #endif
 
+#define log_always(fmt, ...) \
+    do { \
+        fprintf(stderr, "(qemu) "); \
+        fprintf(stderr, fmt, ##__VA_ARGS__); \
+    } while (0)
 
 extern void* data_region_actual_address;
 extern void* global_ram_address;
