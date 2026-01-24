@@ -249,10 +249,12 @@ void setup_data(comm_page_t *c) {
          global_ram_address);
   fflush(stderr);
   uint64_t data_start = c->p10;
-  data_region_actual_address =
-      (void *)((uint64_t)(-2 * 1024 * 1024 * 1024 /* Offset: Ref gio's diag */ +
-                          data_start) +
-               (uint64_t)global_ram_address);
+//   data_region_actual_address =
+//       (void *)((uint64_t)(-2 * 1024 * 1024 * 1024 /* Offset: Ref gio's diag */ +
+//                           data_start) +
+//                (uint64_t)global_ram_address);
+  data_region_actual_address = (void *)((uint64_t)global_ram_address);
+  log_sg("Data region actual addr: %p\n", data_region_actual_address);
   gem_slots.host_address = ((uint64_t)data_region_actual_address);
   gem_slots.guest_address = ((uint64_t)data_start);
   // sleep(10000000000);
@@ -291,25 +293,28 @@ extern void* mmap_listener(void* arg) {
                 case GEM_ALLOCATION:
                     uint64_t size = c->p2;
                     assert(gem_slots.host_address + size < data_region_actual_address + DATA_SIZE);
+                    fprintf(stderr, "[QEMU-HOST] GEM_ALLOCATION of size: 0x%lx\n", size);
+                    fprintf(stderr, "[QEMU-HOST] Mapping at host address: 0x%lx\n", gem_slots.host_address);
+                    fprintf(stderr, "[QEMU-GUEST] Mapping at guest address: 0x%lx\n", gem_slots.guest_address);
                     assert(munmap(gem_slots.host_address, size) == 0);
                     assert(munmap(gem_slots.guest_address, size) == 0);
 
-      // Mapping on original offset
-      void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
-                          c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(retptr != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.host_address);
+                    // Mapping on original offset
+                    void *retptr = mmap(gem_slots.host_address, c->p2 /*size*/, c->p3,
+                                        c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    if (retptr == MAP_FAILED) {
+                        perror("[QEMU-HOST] MMAP failed for GEM_ALLOCATION!!!!!");
+                        assert(retptr != MAP_FAILED);
+                    }
+                    assert(retptr == gem_slots.host_address);
 
-      retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
-                    c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
-      if (retptr == MAP_FAILED) {
-        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
-        assert(ret != MAP_FAILED);
-      }
-      assert(retptr == gem_slots.guest_address);
+                    retptr = mmap(gem_slots.guest_address, c->p2 /*size*/, c->p3,
+                                    c->p4 | MAP_SHARED | MAP_FIXED, c->p5, c->p6);
+                    if (retptr == MAP_FAILED) {
+                        perror("[QEMU-GUEST] MMAP failed for GEM_ALLOCATION!!!!!");
+                        assert(ret != MAP_FAILED);
+                    }
+                    assert(retptr == gem_slots.guest_address);
 
                     c->ret = (uint64_t)gem_slots.guest_address;
                     pthread_mutex_lock(&gem_slots_lock);

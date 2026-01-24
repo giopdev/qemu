@@ -36,10 +36,15 @@
 
 // static const size_t LOW_OFFSET_INTO_MEMORY = 0x100000ULL;           // 1MB
 // static const void *VIRTUAL_ADDRESS_LOW = (void*)0x100000ULL;        // 1MB
+static const void *VIRTUAL_ADDRESS_LOW = (void*)0x200000ULL;        // 2MB
+static const void *VIRTUAL_ADDRESS_MED = (void*)0x100000000ULL;        // 4GB
+static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x140000000ULL;    // 5GB
+
 static const size_t LOW_OFFSET_INTO_MEMORY = 0x40000000ULL;           // 1MB
-static const void *VIRTUAL_ADDRESS_LOW = (void*)0x40000000ULL;        // 1MB
+// static const void *VIRTUAL_ADDRESS_LOW = (void*)0x40000000ULL;        // 1MB
 static const size_t HIGH_OFFSET_INTO_MEMORY = 0x80000000ULL;        // 2GB
-static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
+// static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x100000000ULL;    // 4GB
+// static const void *VIRTUAL_ADDRESS_HIGH = (void*)0x140000000ULL;    // 5GB
 void *global_ram_address = NULL;
 
 static pthread_t mmap_listen_thr;
@@ -194,6 +199,9 @@ static void *mmap_reserve(size_t size, int fd)
     return mmap(0, size, PROT_NONE, flags, fd, 0);
 }
 
+/* Really bad heuristic, but it will do for now. */
+int dimm_counter = 0;
+
 /*
  * Activate memory in a reserved region from the given fd (if any), to make
  * it accessible.
@@ -221,8 +229,9 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         map_sync_flags = MAP_SYNC | MAP_SHARED_VALIDATE;
     }
 
-    printf("mmap_activate: ptr=%p; size=%ld; FD=%d; offset=%ld; flags=0x%x\n",
-           ptr, size, fd, map_offset, flags | map_sync_flags);
+    // printf("mmap_activate: ptr=%p; size=%ld; FD=%d; offset=%ld; flags=0x%x\n",
+    //        ptr, size, fd, map_offset, flags | map_sync_flags);
+
     activated_ptr = mmap(ptr, size, prot, flags | map_sync_flags, fd,
                          map_offset);
     char *proc_link = g_strdup_printf("/proc/self/fd/%d", fd);
@@ -259,37 +268,103 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         activated_ptr = mmap(ptr, size, prot, flags, fd, map_offset);
     }
 
+    if (dimm_counter == 0) {
+        fprintf(stderr, "----------------------\n");
+        fprintf(stderr, "First DIMM mmap activated at %p size %ld\n",
+                activated_ptr, size);
+        if(qemu_map_flags & QEMU_MAP_SHARED){
+            size_t length = 4*1024*1024*1024ULL - 2*1024*1024; // 4GB - 2MB
+            off_t offset = map_offset + (off_t)2*1024*1024;
+            void *want = (void *) VIRTUAL_ADDRESS_LOW;
+            printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+
+            void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+            if (lowShadow == MAP_FAILED){
+                perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
+            }
+        }
+        dimm_counter++;
+        
+    } else if (dimm_counter == 1) {
+        fprintf(stderr, "----------------------\n");
+        fprintf(stderr, "Second DIMM mmap activated at %p size %ld\n",
+                activated_ptr, size);
+        if(qemu_map_flags & QEMU_MAP_SHARED){
+            size_t length = 1*1024*1024*1024ULL; // 4GB - 2MB
+            off_t offset = map_offset;
+            void *want = (void *) VIRTUAL_ADDRESS_MED;
+            printf("Medium mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+
+            void *medShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+            if (medShadow == MAP_FAILED){
+                perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap MED FAILED!\n");
+            }
+        }
+        
+        // This should be the global ram address (used by sg-listener)
+        global_ram_address = activated_ptr;
+        dimm_counter++;
+    } else if (dimm_counter == 2) {
+        fprintf(stderr, "----------------------\n");
+        fprintf(stderr, "Third DIMM mmap activated at %p size %ld\n",
+                activated_ptr, size);
+        if(qemu_map_flags & QEMU_MAP_SHARED){
+            size_t length = size - 5*1024*1024*1024ULL; // total_size - 5GB
+            off_t offset = map_offset;
+            void *want = (void *) VIRTUAL_ADDRESS_HIGH;
+            printf("High mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+
+            void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+            if (highShadow == MAP_FAILED){
+                perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
+            }
+        }
+        fprintf(stderr, "----------------------\n");
+
+        // After ram is mapped, spawn mmap listener thread
+        if (!mmap_listen_thr_started) {
+            mmap_listen_thr_started = 1;
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
+            pthread_attr_destroy(&attr);
+        }
+
+        dimm_counter++;
+    }
+
+
     // Heuristic, we're always assuming fd = 11 for ram
     if(strstr(file_name, "/memfd:memory-backend-memfd")){
         printf("activated_ptr: %p; Size: %ld; FD: %d; offset=%ld; file: %s\n", activated_ptr, size, fd, map_offset, file_name);
         
-        if(qemu_map_flags & QEMU_MAP_SHARED){
-            // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
-            if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
-                size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
-                off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
-                void *want = (void *)VIRTUAL_ADDRESS_LOW;
-                printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+        // if(qemu_map_flags & QEMU_MAP_SHARED){
+        //     // Shadow mapping of LOW RAM from file[0x100000 -> HIGH_OFFSET - LOW_OFFSET]
+        //     if(size > LOW_OFFSET_INTO_MEMORY && map_offset == 0){
+        //         size_t length = HIGH_OFFSET_INTO_MEMORY - LOW_OFFSET_INTO_MEMORY;
+        //         off_t offset = map_offset + (off_t)LOW_OFFSET_INTO_MEMORY;
+        //         void *want = (void *)VIRTUAL_ADDRESS_LOW;
+        //         printf("Low mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
-                void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
-                if (lowShadow == MAP_FAILED){
-                    perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
-                }
-            }
+        //         void *lowShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+        //         if (lowShadow == MAP_FAILED){
+        //             perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap LOW FAILED!\n");
+        //         }
+        //     }
 
-            // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
-            if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
-                size_t length = size - HIGH_OFFSET_INTO_MEMORY;
-                off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
-                void *want = (void *)VIRTUAL_ADDRESS_HIGH;
-                printf("high mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
+        //     // Shadow mapping of HIGH RAM from file[0x80000000 -> size - HIGH_OFFSET]
+        //     if(size > HIGH_OFFSET_INTO_MEMORY && map_offset == 0){
+        //         size_t length = size - HIGH_OFFSET_INTO_MEMORY;
+        //         off_t offset = map_offset + (off_t)HIGH_OFFSET_INTO_MEMORY;
+        //         void *want = (void *)VIRTUAL_ADDRESS_HIGH;
+        //         printf("high mapping.. (%p -- %p)\n", want, (void *)((uintptr_t)want + length));
 
-                void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
-                if(highShadow == MAP_FAILED){
-                    perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
-                }
-            }
-        }
+        //         void *highShadow = mmap(want, length, prot, (MAP_SHARED | MAP_FIXED), fd, offset);
+        //         if(highShadow == MAP_FAILED){
+        //             perror("WARNING 1:1 MAPPINGS NOT PRESENT -- mmap HIGH FAILED!\n");
+        //         }
+        //     }
+        // }
 
         // After ram is mapped, spawn mmap listener thread
         // if (!mmap_listen_thr_started) {
@@ -299,7 +374,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         //     pthread_create(&mmap_listen_thr, &attr, mmap_listener, NULL);
         //     pthread_attr_destroy(&attr);
         // }
-        global_ram_address = activated_ptr;
+        // global_ram_address = activated_ptr;
     }else {
     // printf("SIZE WE DONT WANT -->>= %lx __ OFFSET = 0x%lx\n", size, map_offset);
     }

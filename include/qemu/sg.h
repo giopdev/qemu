@@ -81,7 +81,8 @@ static const  size_t PAGE_SIZE    = 4*1024;
 #define COMM_ADDR  0xf00000ULL
 #define COMM_MAGIC 0x1234567812345678ULL
 
-static void* DATA_REGION = (void*)0x100008000ULL;
+// static void* DATA_REGION = (void*)0x100008000ULL;
+static void* DATA_REGION = (void*)0x100000000ULL;
 // This is different than where it appears in the guest.
 // Qemu maps the ram region from 0x80000000 into the allocation to 0x100000000 in the guest AS
 static void* DATA_HOST_OFFSET = (void*)0x80008000ULL;
