@@ -283,6 +283,27 @@ extern void* mmap_listener(void* arg) {
             (unsigned long long)(uint64_t)(uintptr_t)c);
     fprintf(stderr, "COMM region MAGIC: %p\n", (void *)*((uint64_t *)COMM_ADDR));
 
+
+    volatile comm_page_t* d = (comm_page_t*)(uintptr_t)DATA_REGION;
+    while (d->magic != COMM_MAGIC) {
+        usleep(1000);
+    }
+    fprintf(stderr, "DATA region MAGIC: %p\n", (void *)*((uint64_t *)DATA_REGION));
+
+    data_region_actual_address = (void *)((uint64_t)global_ram_address);
+    fprintf(stderr, "Data region actual addr: %p\n", data_region_actual_address);
+    fprintf(stderr, "Data region MAGIC: %p\n", (void *)*((uint64_t *)data_region_actual_address));
+
+    while (*((uint64_t *)data_region_actual_address) != COMM_MAGIC) {
+        usleep(1000);
+    }
+
+    gem_slots.host_address = ((uint64_t)data_region_actual_address);
+    gem_slots.guest_address = ((uint64_t)DATA_REGION);
+    create_and_setup_xcb_window();
+    c->ret = 0;
+    c->req_bit = 0;
+
     static void *curr_host_addr = NULL;
     static void *curr_guest_addr = NULL;
     /*
