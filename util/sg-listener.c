@@ -35,6 +35,212 @@
 #include <stdint.h>
 #include <errno.h>
 
+/* IOCTL logging */
+static uint64_t ioctl_count = 0;
+static uint64_t ioctl_total_ns = 0;
+static uint64_t ioctl_max_ns = 0;
+static uint64_t frame_count = 0;
+static bool ioctl_logging_enabled = false;
+#define IOCTL_STATS_MAX 64
+typedef struct ioctl_stat {
+  unsigned long request;
+  uint64_t count;
+  uint64_t total_ns;
+  uint64_t max_ns;
+} ioctl_stat;
+static ioctl_stat ioctl_stats[IOCTL_STATS_MAX];
+static size_t ioctl_stats_used = 0;
+static uint64_t execbuffer2_last_flags = 0;
+
+static void print_execbuffer2_flags(uint64_t flags) {
+  if (flags == 0) {
+    printf("NONE");
+    return;
+  }
+
+  bool first = true;
+#define PRINT_FLAG(flag)                                                     \
+  do {                                                                       \
+    if (flags & (flag)) {                                                    \
+      printf("%s%s", first ? "" : "|", #flag);                            \
+      first = false;                                                         \
+    }                                                                        \
+  } while (0)
+
+  PRINT_FLAG(I915_EXEC_RING_MASK);
+  PRINT_FLAG(I915_EXEC_DEFAULT);
+  PRINT_FLAG(I915_EXEC_RENDER);
+  PRINT_FLAG(I915_EXEC_BSD);
+  PRINT_FLAG(I915_EXEC_BLT);
+  PRINT_FLAG(I915_EXEC_VEBOX);
+  PRINT_FLAG(I915_EXEC_SECURE);
+  PRINT_FLAG(I915_EXEC_NO_RELOC);
+  PRINT_FLAG(I915_EXEC_HANDLE_LUT);
+  PRINT_FLAG(I915_EXEC_BSD_MASK);
+  PRINT_FLAG(I915_EXEC_RESOURCE_STREAMER);
+  PRINT_FLAG(I915_EXEC_FENCE_ARRAY);
+  PRINT_FLAG(I915_EXEC_FENCE_OUT);
+  PRINT_FLAG(I915_EXEC_USE_EXTENSIONS);
+#ifdef I915_EXEC_NO_FENCE
+  PRINT_FLAG(I915_EXEC_NO_FENCE);
+#endif
+  PRINT_FLAG(I915_EXEC_BATCH_FIRST);
+  PRINT_FLAG(I915_EXEC_FENCE_SUBMIT);
+#ifdef I915_EXEC_CAPTURE
+  PRINT_FLAG(I915_EXEC_CAPTURE);
+#endif
+#ifdef I915_EXEC_DEBUG
+  PRINT_FLAG(I915_EXEC_DEBUG);
+#endif
+
+  if (first)
+    printf("0x%llx", (unsigned long long)flags);
+
+#undef PRINT_FLAG
+}
+
+static const char *i915_ioctl_name(unsigned long request) {
+  switch (request) {
+  case DRM_IOCTL_I915_GEM_EXECBUFFER:
+    return "GEM_EXECBUFFER";
+  case DRM_IOCTL_I915_GEM_EXECBUFFER2:
+    return "GEM_EXECBUFFER2";
+  case DRM_IOCTL_I915_GEM_CREATE:
+    return "GEM_CREATE";
+  case DRM_IOCTL_I915_GEM_CREATE_EXT:
+    return "GEM_CREATE_EXT";
+  case DRM_IOCTL_I915_GEM_SET_DOMAIN:
+    return "GEM_SET_DOMAIN";
+  case DRM_IOCTL_I915_GEM_GET_TILING:
+    return "GEM_GET_TILING";
+  case DRM_IOCTL_I915_GEM_SET_TILING:
+    return "GEM_SET_TILING";
+  case DRM_IOCTL_I915_GEM_BUSY:
+    return "GEM_BUSY";
+  case DRM_IOCTL_I915_GEM_MMAP:
+    return "GEM_MMAP";
+  case DRM_IOCTL_I915_GEM_MMAP_GTT:
+    return "GEM_MMAP_GTT";
+  case DRM_IOCTL_I915_GEM_MMAP_OFFSET:
+    return "GEM_MMAP_OFFSET";
+  case DRM_IOCTL_I915_GEM_PREAD:
+    return "GEM_PREAD";
+  case DRM_IOCTL_I915_GEM_PWRITE:
+    return "GEM_PWRITE";
+  case DRM_IOCTL_I915_GEM_THROTTLE:
+    return "GEM_THROTTLE";
+  case DRM_IOCTL_I915_GEM_CONTEXT_CREATE:
+    return "GEM_CONTEXT_CREATE";
+  case DRM_IOCTL_I915_GEM_CONTEXT_CREATE_EXT:
+    return "GEM_CONTEXT_CREATE_EXT";
+  case DRM_IOCTL_I915_GEM_CONTEXT_DESTROY:
+    return "GEM_CONTEXT_DESTROY";
+#ifdef DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM
+  case DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM:
+    return "GEM_CONTEXT_SETPARAM";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM
+  case DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM:
+    return "GEM_CONTEXT_GETPARAM";
+#endif
+  case DRM_IOCTL_I915_GEM_USERPTR:
+    return "GEM_USERPTR";
+  case DRM_IOCTL_I915_GEM_WAIT:
+    return "GEM_WAIT";
+  case DRM_IOCTL_I915_GEM_SW_FINISH:
+    return "GEM_SW_FINISH";
+  case DRM_IOCTL_I915_GEM_GET_APERTURE:
+    return "GEM_GET_APERTURE";
+  case DRM_IOCTL_I915_GEM_SET_CACHING:
+    return "GEM_SET_CACHING";
+  case DRM_IOCTL_I915_GEM_GET_CACHING:
+    return "GEM_GET_CACHING";
+  case DRM_IOCTL_I915_REG_READ:
+    return "REG_READ";
+  case DRM_IOCTL_I915_GETPARAM:
+    return "GETPARAM";
+#ifdef DRM_IOCTL_I915_SETPARAM
+  case DRM_IOCTL_I915_SETPARAM:
+    return "SETPARAM";
+#endif
+  case DRM_IOCTL_I915_GEM_MADVISE:
+    return "GEM_MADVISE";
+#ifdef DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS
+  case DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS:
+    return "GEM_CONTEXT_RESET_STATS";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_VM_CREATE
+  case DRM_IOCTL_I915_GEM_VM_CREATE:
+    return "GEM_VM_CREATE";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_VM_DESTROY
+  case DRM_IOCTL_I915_GEM_VM_DESTROY:
+    return "GEM_VM_DESTROY";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_VM_BIND
+  case DRM_IOCTL_I915_GEM_VM_BIND:
+    return "GEM_VM_BIND";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_VM_UNBIND
+  case DRM_IOCTL_I915_GEM_VM_UNBIND:
+    return "GEM_VM_UNBIND";
+#endif
+  default:
+    return NULL;
+  }
+}
+
+static void print_ioctl_stats(void) {
+    if (ioctl_count == 0) {
+        fprintf(stderr, "IOCTL stats: no ioctls recorded in this interval\n");
+        return;
+    }
+
+    double avg_ns = (double)ioctl_total_ns / (double)ioctl_count;
+    log_stat( "==== IOCTL STATS (last %lu frames) ===\n", (unsigned long)5000);
+    log_stat( "Total IOCTLs: %lu\n", (unsigned long)ioctl_count);
+    log_stat( "Total time: %llu ns\n", (unsigned long long)ioctl_total_ns);
+    log_stat( "Average time: %.2f us\n", avg_ns / 1000.0);
+    log_stat( "Max time: %llu ns (%.2f us)\n", (unsigned long long)ioctl_max_ns, (double)ioctl_max_ns / 1000.0);
+    log_stat( "Per-request breakdown:\n");
+
+    for (size_t i = 0; i < ioctl_stats_used; ++i) {
+        ioctl_stat *s = &ioctl_stats[i];
+        const char *name = i915_ioctl_name(s->request);
+        if (name)
+            log_stat( "  %s: count=%llu, total=%llu ns, avg=%.2f us, max=%llu ns\n",
+                    name,
+                    (unsigned long long)s->count,
+                    (unsigned long long)s->total_ns,
+                    (s->count ? (double)s->total_ns / (double)s->count / 1000.0 : 0.0),
+                    (unsigned long long)s->max_ns);
+        else
+            log_stat( "  0x%lx: count=%llu, total=%llu ns, avg=%.2f us, max=%llu ns\n",
+                    (unsigned long)s->request,
+                    (unsigned long long)s->count,
+                    (unsigned long long)s->total_ns,
+                    (s->count ? (double)s->total_ns / (double)s->count / 1000.0 : 0.0),
+                    (unsigned long long)s->max_ns);
+    }
+
+    log_stat( "====================================\n");
+}
+
+static ioctl_stat *get_ioctl_stat(unsigned long request) {
+  for (size_t i = 0; i < ioctl_stats_used; ++i) {
+    if (ioctl_stats[i].request == request)
+      return &ioctl_stats[i];
+  }
+
+  if (ioctl_stats_used >= IOCTL_STATS_MAX)
+    return NULL;
+
+  ioctl_stat *slot = &ioctl_stats[ioctl_stats_used++];
+  memset(slot, 0, sizeof(*slot));
+  slot->request = request;
+  return slot;
+}
+
 struct timespec ts;
 void *data_region_actual_address = NULL;
 typedef struct {
@@ -48,7 +254,7 @@ xcb_connection_t *conn;
 
 static long mmap_freq = 0;
 static long ioctl_freq = 0;
-static long frame_count = 0;
+// static long frame_count = 0;
 static double frame_latency = 0.0;
 static double time_spent_in_ioctl = 0.0;
 static double start_frame = 0.0;
@@ -142,8 +348,7 @@ static void create_pixmap_from_kbuf(check *bufs, int buf_index,
         conn, bufs[buf_index].pixmap, win, size_bytes, WIDTH, HEIGHT, stride, 24,
         32, bufs[buf_index].bo_fd);
     
-    // Takes the ownership of the GPU buffer. and hands over pixmap as the
-    // identifier
+    // Takes ownership of the GPU buffer and hands over pixmap as the identifier
     xcb_flush(conn);
     xcb_generic_error_t *err = xcb_request_check(conn, cookie);
     if (err) {
@@ -192,10 +397,10 @@ static int create_xcb_fence(check *bufs, int buf_index) {
 
   /*
     Logic:
-        1: Gets the memfd from (1)
-        2: Maps to our process using mmap (xshmfence_map_shm)
-        3: identifier for the fence is sync_fence (X11 allocated)
-        4: Transfers ownership of the fd to the X11. and closes the fd inside process.
+    1: Gets the memfd from (1)
+    2: Maps to our process using mmap (xshmfence_map_shm)
+    3: identifier for the fence is sync_fence (X11 allocated)
+    4: Transfers ownership of the fd to the X11. and closes the fd inside process.
   */
   xcb_flush(conn);
 
@@ -352,12 +557,46 @@ extern void* mmap_listener(void* arg) {
                 
             case IOCTL: {
                 uint64_t start,end;
+                struct timespec start_ts;
+                struct timespec end_ts;
                 uint64_t req_type = _IOC_NR(c->p2);
                 int already_done = 0;
+
+                /* Log the time it takes for the IOCTLs */
+                clock_gettime(CLOCK_MONOTONIC_RAW, &start_ts);
                 ret = ioctl(c->p1, c->p2, (void *)c->p3);
-                c->ret = ret;
+                clock_gettime(CLOCK_MONOTONIC_RAW, &end_ts);
+
+                uint64_t start_ns = (uint64_t)start_ts.tv_sec * 1000000000ULL +
+                                    (uint64_t)start_ts.tv_nsec;
+                uint64_t end_ns = (uint64_t)end_ts.tv_sec * 1000000000ULL +
+                                    (uint64_t)end_ts.tv_nsec;
+                uint64_t delta_ns = end_ns - start_ns;
+
+                ioctl_count++;
+                ioctl_total_ns += delta_ns;
+                if (delta_ns > ioctl_max_ns)
+                    ioctl_max_ns = delta_ns;
+
+                /* track additional derived counters */
                 ioctl_freq++;
-                
+                time_spent_in_ioctl += (double)delta_ns; /* nanoseconds */
+
+                ioctl_stat *stat = get_ioctl_stat(c->p2);
+                if (stat) {
+                    stat->count++;
+                    stat->total_ns += delta_ns;
+                    if (delta_ns > stat->max_ns)
+                    stat->max_ns = delta_ns;
+                }
+
+                if (c->p2 == DRM_IOCTL_I915_GEM_EXECBUFFER2 && c->p3) {
+                    const struct drm_i915_gem_execbuffer2 *execbuf =
+                        (const struct drm_i915_gem_execbuffer2 *)arg;
+                    execbuffer2_last_flags = execbuf->flags;
+                }
+
+                c->ret = ret;
                 __sync_synchronize();
                 c->req_bit = 0;
                 break;
@@ -433,8 +672,8 @@ extern void* mmap_listener(void* arg) {
             case X11_PRESENT:
                 check *tmp_buf = (check *)c->p1;
                 log_sg("X11_PRESENT() is called\n");
-                //   xshmfence_trigger(tmp_buf[c->p2].shm_fence);
-                xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
+                // xshmfence_trigger(tmp_buf[c->p2].shm_fence);
+                // xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
                 xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
                                     0,                         // serial
                                     XCB_NONE,                  // valid
@@ -452,27 +691,24 @@ extern void* mmap_listener(void* arg) {
                 c->req_bit = 0;
                 log_sg("X11_PRESENT() completed");
                 frame_count++;
-                if (start_frame > 0){
-                    clock_gettime(CLOCK_REALTIME, &ts);
-                    double end_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
-                    frame_latency += (end_frame - start_frame);
-                }
-                if(frame_count == 1){
-                    mmap_freq = 0;
-                    ioctl_freq = 0;
-                    frame_latency = 0.0;
-                    time_spent_in_ioctl = 0;
-                }
-                clock_gettime(CLOCK_REALTIME, &ts);
-                start_frame = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+
                 if(frame_count%5000 == 0){
-                    log_stat("Frame: %lu; MMAPs: %lu; IOCTLs: %lu; Frame latency: %f; IOCTL-Latency: %f\n", frame_count, mmap_freq, ioctl_freq, (double)frame_latency/5000.0, (double)time_spent_in_ioctl/(5000.0*1e6));
+                    /* Print IOCTL statistics collected since last report and reset counters */
+                    print_ioctl_stats();
+
+                    /* Reset cumulative and per-request stats */
+                    ioctl_count = 0;
+                    ioctl_total_ns = 0;
+                    ioctl_max_ns = 0;
+                    ioctl_stats_used = 0;
+                    memset(ioctl_stats, 0, sizeof(ioctl_stats));
+
+                    /* Reset runtime counters */
                     frame_latency = 0;
                     ioctl_freq = 0;
                     mmap_freq = 0;
                     time_spent_in_ioctl = 0;
                     execbuf_count = 0;
-
                 }
                 break;
 

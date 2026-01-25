@@ -127,8 +127,11 @@ static void* UNMAP_DATA_MSG = (void*)0x1234567f1234567fULL;
 
 void* mmap_listener(void* arg);
 
-#define WIDTH 1280
-#define HEIGHT 720
+// #define WIDTH 1280
+// #define HEIGHT 720
+#define WIDTH 300
+#define HEIGHT 300
+
 #define sys_exec_vmexits 549
 #define sys_sg_vmexits_printreset 550
 #define I915_EXEC_ASYNC (1<<15)
@@ -136,7 +139,6 @@ void* mmap_listener(void* arg);
 
 static inline uint64_t clock_gettime_ns(void)
 {
-    
     unsigned int lo, hi;
     asm volatile("lfence; rdtscp" : "=a"(lo), "=d"(hi) :: "memory");
     return ((uint64_t)hi << 32) | lo;
@@ -152,8 +154,7 @@ typedef struct {
 } log_entry_t;
 
 static void prefault_range(void *addr, size_t len) {
-  char *p = addr;
-
+    char *p = addr;
     for (size_t off = 0; off < len; off += PAGE_SIZE)
         memset((void*)(p + off), 0, PAGE_SIZE);
 }
