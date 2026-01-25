@@ -53,6 +53,33 @@ typedef struct ioctl_stat {
 static ioctl_stat ioctl_stats[IOCTL_STATS_MAX];
 static size_t ioctl_stats_used = 0;
 static uint64_t execbuffer2_last_flags = 0;
+static uint32_t syncobj_wait_last_flags = 0;
+
+static void print_syncobj_wait_flags(FILE *out, uint32_t flags) {
+  if (flags == 0) {
+    fprintf(out, "NONE\n");
+    return;
+  }
+
+  bool first = true;
+#define PRINT_SYNCOBJ_FLAG(flag)                                            \
+  do {                                                                       \
+    if (flags & (flag)) {                                                    \
+      fprintf(out, "%s%s", first ? "" : "|", #flag);                    \
+      first = false;                                                         \
+    }                                                                        \
+  } while (0)
+
+  PRINT_SYNCOBJ_FLAG(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL);
+  PRINT_SYNCOBJ_FLAG(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT);
+
+  if (first)
+    fprintf(out, "0x%x", flags);
+
+  fprintf(out, "\n");
+
+#undef PRINT_SYNCOBJ_FLAG
+}
 
 static void print_execbuffer2_flags(uint64_t flags) {
     if (flags == 0) {
@@ -323,6 +350,9 @@ static void print_ioctl_stats(void) {
     log_stat("last EXECBUFFER2 flags: 0x%llx => ",
         (unsigned long long)execbuffer2_last_flags);
     print_execbuffer2_flags(execbuffer2_last_flags);
+
+    log_stat("last SYNCOBJ_WAIT flags: 0x%x => ", syncobj_wait_last_flags);
+    print_syncobj_wait_flags(stderr, syncobj_wait_last_flags);
 
     for (size_t i = 0; i < ioctl_stats_used; ++i) {
         ioctl_stat *s = &ioctl_stats[i];
@@ -723,6 +753,11 @@ extern void* mmap_listener(void* arg) {
                     execbuffer2_last_flags = execbuf->flags;
                 }
 
+                if (c->p2 == DRM_IOCTL_SYNCOBJ_WAIT && c->p3) {
+                    const struct drm_syncobj_wait *wait = (const struct drm_syncobj_wait *)c->p3;
+                    syncobj_wait_last_flags = wait->flags;
+                }
+
                 c->ret = ret;
                 __sync_synchronize();
                 c->req_bit = 0;
@@ -829,6 +864,7 @@ extern void* mmap_listener(void* arg) {
                     ioctl_max_ns = 0;
                     ioctl_stats_used = 0;
                     execbuffer2_last_flags = 0;
+                    syncobj_wait_last_flags = 0;
                     memset(ioctl_stats, 0, sizeof(ioctl_stats));
 
                     /* Reset runtime counters */
