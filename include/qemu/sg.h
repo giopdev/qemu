@@ -17,7 +17,7 @@
 /* Uncomment to enable debugging */
 // #define COMMAND_DEBUG
 // #define GEM_DEBUG
-// #define STAT_DEBUG
+#define STAT_DEBUG
 
 #ifdef COMMAND_DEBUG
 #define log_sg(fmt, ...) \

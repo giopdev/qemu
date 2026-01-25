@@ -47,54 +47,57 @@ typedef struct ioctl_stat {
   uint64_t count;
   uint64_t total_ns;
   uint64_t max_ns;
+  uint64_t last_fd;
 } ioctl_stat;
 static ioctl_stat ioctl_stats[IOCTL_STATS_MAX];
 static size_t ioctl_stats_used = 0;
 static uint64_t execbuffer2_last_flags = 0;
 
 static void print_execbuffer2_flags(uint64_t flags) {
-  if (flags == 0) {
-    printf("NONE");
-    return;
-  }
+    if (flags == 0) {
+        fprintf(stderr, "NONE");
+        return;
+    }
 
-  bool first = true;
-#define PRINT_FLAG(flag)                                                     \
-  do {                                                                       \
-    if (flags & (flag)) {                                                    \
-      printf("%s%s", first ? "" : "|", #flag);                            \
-      first = false;                                                         \
-    }                                                                        \
-  } while (0)
+    bool first = true;
+    #define PRINT_FLAG(flag)                                                     \
+    do {                                                                       \
+        if (flags & (flag)) {                                                    \
+        fprintf(stderr, "%s%s", first ? "" : "|", #flag);                            \
+        first = false;                                                         \
+        }                                                                        \
+    } while (0)
 
-  PRINT_FLAG(I915_EXEC_RING_MASK);
-  PRINT_FLAG(I915_EXEC_DEFAULT);
-  PRINT_FLAG(I915_EXEC_RENDER);
-  PRINT_FLAG(I915_EXEC_BSD);
-  PRINT_FLAG(I915_EXEC_BLT);
-  PRINT_FLAG(I915_EXEC_VEBOX);
-  PRINT_FLAG(I915_EXEC_SECURE);
-  PRINT_FLAG(I915_EXEC_NO_RELOC);
-  PRINT_FLAG(I915_EXEC_HANDLE_LUT);
-  PRINT_FLAG(I915_EXEC_BSD_MASK);
-  PRINT_FLAG(I915_EXEC_RESOURCE_STREAMER);
-  PRINT_FLAG(I915_EXEC_FENCE_ARRAY);
-  PRINT_FLAG(I915_EXEC_FENCE_OUT);
-  PRINT_FLAG(I915_EXEC_USE_EXTENSIONS);
-#ifdef I915_EXEC_NO_FENCE
-  PRINT_FLAG(I915_EXEC_NO_FENCE);
-#endif
-  PRINT_FLAG(I915_EXEC_BATCH_FIRST);
-  PRINT_FLAG(I915_EXEC_FENCE_SUBMIT);
-#ifdef I915_EXEC_CAPTURE
-  PRINT_FLAG(I915_EXEC_CAPTURE);
-#endif
-#ifdef I915_EXEC_DEBUG
-  PRINT_FLAG(I915_EXEC_DEBUG);
-#endif
+    PRINT_FLAG(I915_EXEC_RING_MASK);
+    PRINT_FLAG(I915_EXEC_DEFAULT);
+    PRINT_FLAG(I915_EXEC_RENDER);
+    PRINT_FLAG(I915_EXEC_BSD);
+    PRINT_FLAG(I915_EXEC_BLT);
+    PRINT_FLAG(I915_EXEC_VEBOX);
+    PRINT_FLAG(I915_EXEC_SECURE);
+    PRINT_FLAG(I915_EXEC_NO_RELOC);
+    PRINT_FLAG(I915_EXEC_HANDLE_LUT);
+    PRINT_FLAG(I915_EXEC_BSD_MASK);
+    PRINT_FLAG(I915_EXEC_RESOURCE_STREAMER);
+    PRINT_FLAG(I915_EXEC_FENCE_ARRAY);
+    PRINT_FLAG(I915_EXEC_FENCE_OUT);
+    PRINT_FLAG(I915_EXEC_USE_EXTENSIONS);
+    #ifdef I915_EXEC_NO_FENCE
+    PRINT_FLAG(I915_EXEC_NO_FENCE);
+    #endif
+    PRINT_FLAG(I915_EXEC_BATCH_FIRST);
+    PRINT_FLAG(I915_EXEC_FENCE_SUBMIT);
+    #ifdef I915_EXEC_CAPTURE
+    PRINT_FLAG(I915_EXEC_CAPTURE);
+    #endif
+    #ifdef I915_EXEC_DEBUG
+    PRINT_FLAG(I915_EXEC_DEBUG);
+    #endif
 
-  if (first)
-    printf("0x%llx", (unsigned long long)flags);
+    if (first)
+        fprintf(stderr, "0x%llx", (unsigned long long)flags);
+
+    fprintf(stderr, "\n");
 
 #undef PRINT_FLAG
 }
@@ -192,35 +195,48 @@ static const char *i915_ioctl_name(unsigned long request) {
 
 static void print_ioctl_stats(void) {
     if (ioctl_count == 0) {
-        fprintf(stderr, "IOCTL stats: no ioctls recorded in this interval\n");
+        log_stat("IOCTL stats: no ioctls recorded in this interval\n");
         return;
     }
 
-    double avg_ns = (double)ioctl_total_ns / (double)ioctl_count;
-    log_stat( "==== IOCTL STATS (last %lu frames) ===\n", (unsigned long)5000);
-    log_stat( "Total IOCTLs: %lu\n", (unsigned long)ioctl_count);
-    log_stat( "Total time: %llu ns\n", (unsigned long long)ioctl_total_ns);
-    log_stat( "Average time: %.2f us\n", avg_ns / 1000.0);
-    log_stat( "Max time: %llu ns (%.2f us)\n", (unsigned long long)ioctl_max_ns, (double)ioctl_max_ns / 1000.0);
-    log_stat( "Per-request breakdown:\n");
+    /* Convert totals to microseconds for reporting */
+    double total_us = (double)ioctl_total_ns / 1000.0;
+    double avg_us = total_us / (double)ioctl_count;
+    double max_us = (double)ioctl_max_ns / 1000.0;
+
+    log_stat("==== IOCTL STATS (last %lu frames) ===\n", (unsigned long)5000);
+    log_stat("Total IOCTLs: %lu\n", (unsigned long)ioctl_count);
+    log_stat("Total time: %.2f us\n", total_us);
+    log_stat("Average time: %.2f us\n", avg_us);
+    log_stat("Max time: %.2f us\n", max_us);
+    log_stat("Per-request breakdown:\n");
+
+    log_stat("last EXECBUFFER2 flags: 0x%llx => ",
+        (unsigned long long)execbuffer2_last_flags);
+    print_execbuffer2_flags(execbuffer2_last_flags);
 
     for (size_t i = 0; i < ioctl_stats_used; ++i) {
         ioctl_stat *s = &ioctl_stats[i];
         const char *name = i915_ioctl_name(s->request);
-        if (name)
-            log_stat( "  %s: count=%llu, total=%llu ns, avg=%.2f us, max=%llu ns\n",
-                    name,
-                    (unsigned long long)s->count,
-                    (unsigned long long)s->total_ns,
-                    (s->count ? (double)s->total_ns / (double)s->count / 1000.0 : 0.0),
-                    (unsigned long long)s->max_ns);
-        else
-            log_stat( "  0x%lx: count=%llu, total=%llu ns, avg=%.2f us, max=%llu ns\n",
-                    (unsigned long)s->request,
-                    (unsigned long long)s->count,
-                    (unsigned long long)s->total_ns,
-                    (s->count ? (double)s->total_ns / (double)s->count / 1000.0 : 0.0),
-                    (unsigned long long)s->max_ns);
+    double total_req_us = (double)s->total_ns / 1000.0;
+    double avg_req_us = (s->count ? (double)s->total_ns / (double)s->count / 1000.0 : 0.0);
+    double max_req_us = (double)s->max_ns / 1000.0;
+    if (name)
+      log_stat("  %s: count=%llu, total=%.2f us, avg=%.2f us, max=%.2f us, last_fd=%llu\n",
+           name,
+           (unsigned long long)s->count,
+           total_req_us,
+           avg_req_us,
+           max_req_us,
+           (unsigned long long)s->last_fd);
+    else
+      log_stat("  0x%lx: count=%llu, total=%.2f us, avg=%.2f us, max=%.2f us, last_fd=%llu\n",
+           (unsigned long)s->request,
+           (unsigned long long)s->count,
+           total_req_us,
+           avg_req_us,
+           max_req_us,
+           (unsigned long long)s->last_fd);
     }
 
     log_stat( "====================================\n");
@@ -580,19 +596,21 @@ extern void* mmap_listener(void* arg) {
 
                 /* track additional derived counters */
                 ioctl_freq++;
-                time_spent_in_ioctl += (double)delta_ns; /* nanoseconds */
+                /* keep time_spent_in_ioctl in microseconds for consistency */
+                time_spent_in_ioctl += (double)delta_ns / 1000.0; /* microseconds */
 
-                ioctl_stat *stat = get_ioctl_stat(c->p2);
-                if (stat) {
-                    stat->count++;
-                    stat->total_ns += delta_ns;
-                    if (delta_ns > stat->max_ns)
-                    stat->max_ns = delta_ns;
-                }
+                      ioctl_stat *stat = get_ioctl_stat(c->p2);
+                      if (stat) {
+                        stat->count++;
+                        stat->total_ns += delta_ns;
+                        if (delta_ns > stat->max_ns)
+                          stat->max_ns = delta_ns;
+                        stat->last_fd = c->p1;
+                      }
 
                 if (c->p2 == DRM_IOCTL_I915_GEM_EXECBUFFER2 && c->p3) {
                     const struct drm_i915_gem_execbuffer2 *execbuf =
-                        (const struct drm_i915_gem_execbuffer2 *)arg;
+                        (const struct drm_i915_gem_execbuffer2 *)c->p3;
                     execbuffer2_last_flags = execbuf->flags;
                 }
 
@@ -701,6 +719,7 @@ extern void* mmap_listener(void* arg) {
                     ioctl_total_ns = 0;
                     ioctl_max_ns = 0;
                     ioctl_stats_used = 0;
+                    execbuffer2_last_flags = 0;
                     memset(ioctl_stats, 0, sizeof(ioctl_stats));
 
                     /* Reset runtime counters */
