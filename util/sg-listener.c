@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <errno.h>
+#include <drm/drm.h>
 
 /* IOCTL logging */
 static uint64_t ioctl_count = 0;
@@ -108,6 +109,8 @@ static const char *i915_ioctl_name(unsigned long request) {
     return "GEM_EXECBUFFER";
   case DRM_IOCTL_I915_GEM_EXECBUFFER2:
     return "GEM_EXECBUFFER2";
+  case DRM_IOCTL_I915_GEM_EXECBUFFER2_WR:
+    return "GEM_EXECBUFFER2_WR";
   case DRM_IOCTL_I915_GEM_CREATE:
     return "GEM_CREATE";
   case DRM_IOCTL_I915_GEM_CREATE_EXT:
@@ -138,14 +141,10 @@ static const char *i915_ioctl_name(unsigned long request) {
     return "GEM_CONTEXT_CREATE_EXT";
   case DRM_IOCTL_I915_GEM_CONTEXT_DESTROY:
     return "GEM_CONTEXT_DESTROY";
-#ifdef DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM
   case DRM_IOCTL_I915_GEM_CONTEXT_SETPARAM:
     return "GEM_CONTEXT_SETPARAM";
-#endif
-#ifdef DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM
   case DRM_IOCTL_I915_GEM_CONTEXT_GETPARAM:
     return "GEM_CONTEXT_GETPARAM";
-#endif
   case DRM_IOCTL_I915_GEM_USERPTR:
     return "GEM_USERPTR";
   case DRM_IOCTL_I915_GEM_WAIT:
@@ -162,12 +161,122 @@ static const char *i915_ioctl_name(unsigned long request) {
     return "REG_READ";
   case DRM_IOCTL_I915_GETPARAM:
     return "GETPARAM";
-#ifdef DRM_IOCTL_I915_SETPARAM
   case DRM_IOCTL_I915_SETPARAM:
     return "SETPARAM";
-#endif
   case DRM_IOCTL_I915_GEM_MADVISE:
     return "GEM_MADVISE";
+#ifdef DRM_IOCTL_SYNCOBJ_CREATE
+  case DRM_IOCTL_SYNCOBJ_CREATE:
+    return "SYNCOBJ_CREATE";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_DESTROY
+  case DRM_IOCTL_SYNCOBJ_DESTROY:
+    return "SYNCOBJ_DESTROY";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_WAIT
+  case DRM_IOCTL_SYNCOBJ_WAIT:
+    return "SYNCOBJ_WAIT";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD
+  case DRM_IOCTL_SYNCOBJ_HANDLE_TO_FD:
+    return "SYNCOBJ_HANDLE_TO_FD";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE
+  case DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE:
+    return "SYNCOBJ_FD_TO_HANDLE";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_RESET
+  case DRM_IOCTL_SYNCOBJ_RESET:
+    return "SYNCOBJ_RESET";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_SIGNAL
+  case DRM_IOCTL_SYNCOBJ_SIGNAL:
+    return "SYNCOBJ_SIGNAL";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT
+  case DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT:
+    return "SYNCOBJ_TIMELINE_WAIT";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_QUERY
+  case DRM_IOCTL_SYNCOBJ_QUERY:
+    return "SYNCOBJ_QUERY";
+#endif
+#ifdef DRM_IOCTL_SYNCOBJ_EVENTFD
+  case DRM_IOCTL_SYNCOBJ_EVENTFD:
+    return "SYNCOBJ_EVENTFD";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_PIN
+  case DRM_IOCTL_I915_GEM_PIN:
+    return "GEM_PIN";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_UNPIN
+  case DRM_IOCTL_I915_GEM_UNPIN:
+    return "GEM_UNPIN";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_ENTERVT
+  case DRM_IOCTL_I915_GEM_ENTERVT:
+    return "GEM_ENTERVT";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_LEAVEVT
+  case DRM_IOCTL_I915_GEM_LEAVEVT:
+    return "GEM_LEAVEVT";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_SET_EXEC_TIMEOUT
+  case DRM_IOCTL_I915_GEM_SET_EXEC_TIMEOUT:
+    return "GEM_SET_EXEC_TIMEOUT";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_GET_EXEC_TIMEOUT
+  case DRM_IOCTL_I915_GEM_GET_EXEC_TIMEOUT:
+    return "GEM_GET_EXEC_TIMEOUT";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_GETPARAM
+  case DRM_IOCTL_I915_GEM_GETPARAM:
+    return "GEM_GETPARAM";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_SHMEM_CREATE
+  case DRM_IOCTL_I915_GEM_SHMEM_CREATE:
+    return "GEM_SHMEM_CREATE";
+#endif
+#ifdef DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS
+  case DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS:
+    return "GEM_CONTEXT_RESET_STATS";
+#endif
+#ifdef DRM_IOCTL_I915_ALLOC
+  case DRM_IOCTL_I915_ALLOC:
+    return "ALLOC";
+#endif
+#ifdef DRM_IOCTL_I915_FREE
+  case DRM_IOCTL_I915_FREE:
+    return "FREE";
+#endif
+#ifdef DRM_IOCTL_I915_INIT
+  case DRM_IOCTL_I915_INIT:
+    return "INIT";
+#endif
+#ifdef DRM_IOCTL_I915_FLUSH
+  case DRM_IOCTL_I915_FLUSH:
+    return "FLUSH";
+#endif
+#ifdef DRM_IOCTL_I915_BATCHBUFFER
+  case DRM_IOCTL_I915_BATCHBUFFER:
+    return "BATCHBUFFER";
+#endif
+#ifdef DRM_IOCTL_I915_IRQ_EMIT
+  case DRM_IOCTL_I915_IRQ_EMIT:
+    return "IRQ_EMIT";
+#endif
+#ifdef DRM_IOCTL_I915_IRQ_WAIT
+  case DRM_IOCTL_I915_IRQ_WAIT:
+    return "IRQ_WAIT";
+#endif
+#ifdef DRM_IOCTL_I915_SWAP
+  case DRM_IOCTL_I915_SWAP:
+    return "SWAP";
+#endif
+#ifdef DRM_IOCTL_I915_CLIP
+  case DRM_IOCTL_I915_CLIP:
+    return "CLIP";
+#endif
 #ifdef DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS
   case DRM_IOCTL_I915_GEM_CONTEXT_RESET_STATS:
     return "GEM_CONTEXT_RESET_STATS";
