@@ -36,6 +36,9 @@
 #include <errno.h>
 #include <drm/drm.h>
 
+/* SYSCALL logging */
+int syscall_logging_enabled = 0;
+
 /* IOCTL logging */
 static uint64_t ioctl_count = 0;
 static uint64_t ioctl_total_ns = 0;
@@ -658,7 +661,18 @@ extern void* mmap_listener(void* arg) {
     uint64_t ret;
     for (;;) {
         switch (c->req_bit) {
-            case LOG_MMAP_EVENT:
+            case SYSCALL_LOGGING_ENABLE:
+                set_syscall_logging(1);
+                log_sg("Syscall logging enabled\n");
+                __sync_synchronize();
+                c->req_bit = 0;
+                break;
+
+            case SYSCALL_LOGGING_DISABLE:
+                set_syscall_logging(0);
+                log_sg("Syscall logging disabled\n");
+                __sync_synchronize();
+                c->req_bit = 0;
                 break;
 
             case GEM_ALLOCATION:
@@ -696,16 +710,14 @@ extern void* mmap_listener(void* arg) {
                 __sync_synchronize();
                 c->req_bit = 0;
                 
-                log_sg("mmap() returned: 0x%lx", c->ret);
+                log_sg("mmap() returned: 0x%lx\n", c->ret);
                 mmap_freq++;
                 break;
             
             case FSTAT:
-                log_sg("fstat() is called");
                 ret = fstat(c->p1, (struct stat*) c->p2);
                 c->ret = ret;
-                log_sg("fstat() returned: %d", ret);
-
+                log_sg("[syscall] fstat(%d, %p) = %ld\n", c->p1, (void *)c->p2, ret);
                 __sync_synchronize();
                 c->req_bit = 0;
                 break; 
@@ -765,75 +777,67 @@ extern void* mmap_listener(void* arg) {
             }
 
             case OPEN:
-                log_sg("open() is called (%s)", (const char*) c->p1);
                 ret = open((const char*) c->p1, c->p2, c->p3);
                 if (ret < 0) {
                     fprintf(stderr, "[QEMU] open failed in sg-listener\n");
                     perror("open");
                 }
                 c->ret = ret;
-                log_sg("open() returned: %d", ret);
+                log_sg("[syscall] open(\"%s\", 0x%x) = %d\n", (const char*) c->p1, c->p2, ret);
                 __sync_synchronize();
                 c->req_bit = 0;
                 break;
 
             case FCNTL:
-                log_sg("fcntl(%d)\n", c->p1);
                 ret = fcntl(c->p1, c->p2, c->p3);
                 c->ret = ret;
-                log_sg("fcntl() returned: %d\n", ret);
                 __sync_synchronize();
+                log_sg("[syscall] fcntl(%d, %d, 0x%lx) = %ld\n", c->p1, c->p2, c->p3, ret);
                 c->req_bit = 0;
                 break;
 
             case READLINK:
-                log_sg("readlink() is called");
                 ret = readlink((const char*) c->p1, (const char*) c->p2, c->p3);
                 c->ret = ret;
-                log_sg("readlink() returned: %d", ret);
                 __sync_synchronize();
+                log_sg("[syscall] readlink(\"%s\", %p, %zu) = %zd\n", (const char*) c->p1,(void *)c->p2, c->p3, ret);
                 c->req_bit = 0;
                 break;
 
             case NEWFSTAT:
-                log_sg("newfstatat() is called");
                 ret = fstatat(c->p1, (const char*) c->p2, (struct stat*) c->p3, c->p4);
                 c->ret = ret;
-                log_sg("newfstatat() returned: %d", ret);
                 __sync_synchronize();
                 c->req_bit = 0;
+                log_sg("[syscall] newfstat(%d, %p) = %d\n", c->p1, (void *)c->p3, ret);
                 break;
 
             case GETDENT:
-                log_sg("getdent() is called");
                 ret = syscall(SYS_getdents64, c->p1, c->p2, c->p3);
                 c->ret = ret;
-                log_sg("getdent() returned: %d", ret);
                 __sync_synchronize();
                 c->req_bit = 0;
+                log_sg("[syscall] getdents64(%d, %p, %zu) = %zd\n", c->p1, c->p2, c->p3, ret);
                 break;
 
             case DUP:
-                log_sg("dup(%d)\n", c->p1);
                 ret = dup(c->p1);
                 c->ret = ret;
-                log_sg("dup() returned: %d\n", ret);
                 __sync_synchronize();
+                log_sg("[syscall] dup(%d) = %d\n", c->p1, ret);
                 c->req_bit = 0;
                 break;
 
             case X11_SETUP:
-                log_sg("X11_SETUP() is called");
                 create_pixmap_from_kbuf((check*) c->p1, c->p2, c->p3, c->p4);
                 create_xcb_fence((check*) c->p1, c->p2);
-                log_sg("X11_SETUP() completed");
                 __sync_synchronize();
+                log_sg("Completed mapping XCB pixmap and fence for buffer index %d\n", c->p2);
                 c->req_bit = 0;
                 break;
 
             case X11_PRESENT:
                 check *tmp_buf = (check *)c->p1;
-                log_sg("X11_PRESENT() is called\n");
                 // xshmfence_trigger(tmp_buf[c->p2].shm_fence);
                 // xcb_sync_trigger_fence(conn, tmp_buf[c->p2].sync_fence);
                 xcb_present_pixmap(conn, win, tmp_buf[c->p2].pixmap,
@@ -851,7 +855,6 @@ extern void* mmap_listener(void* arg) {
 
                 xcb_flush(conn);
                 c->req_bit = 0;
-                log_sg("X11_PRESENT() completed");
                 frame_count++;
 
                 if(frame_count%5000 == 0){
@@ -877,16 +880,13 @@ extern void* mmap_listener(void* arg) {
                 break;
 
             case CLOSE:
-                log_sg("close() is called");
                 close(c->p1);
-                log_sg("close() completed");
                 __sync_synchronize();
+                log_sg("[syscall] close(%d) = %d\n", c->p1, ret);
                 c->req_bit = 0;
-                // bufs_persistent = c->p1;
                 break;
 
             default:
-                // fprintf(stderr, "[QEMU] No such event:%llu", (unsigned long long)c->req_bit);
                 break;
         }
     }

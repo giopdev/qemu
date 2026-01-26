@@ -15,15 +15,22 @@
 #include <xcb/sync.h>
 
 /* Uncomment to enable debugging */
-// #define COMMAND_DEBUG
+#define COMMAND_DEBUG
 // #define GEM_DEBUG
 #define STAT_DEBUG
+
+/* Syscall logging toggle */
+extern int syscall_logging_enabled;
+
+static void set_syscall_logging(int enable) { syscall_logging_enabled = enable ? 1 : 0; }
 
 #ifdef COMMAND_DEBUG
 #define log_sg(fmt, ...) \
     do { \
-        fprintf(stderr, "(qemu: COMMAND) "); \
-        fprintf(stderr, fmt, ##__VA_ARGS__); \
+        if (syscall_logging_enabled) { \
+            fprintf(stderr, "(qemu: COMMAND) "); \
+            fprintf(stderr, fmt, ##__VA_ARGS__); \
+        } \
     } while (0)
 #else
 #define log_sg(fmt, ...) do {} while (0)
@@ -103,6 +110,10 @@ static const  uint64_t DUP = 11;
 static const  uint64_t X11_SETUP = 12;
 static const  uint64_t X11_PRESENT = 13;
 static const  uint64_t CLOSE = 14;
+
+/* Syscall logging toggles */
+static const  uint64_t SYSCALL_LOGGING_ENABLE = 15;
+static const  uint64_t SYSCALL_LOGGING_DISABLE = 16;
 
 
 // Sizes

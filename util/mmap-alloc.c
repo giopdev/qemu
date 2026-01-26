@@ -271,6 +271,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         activated_ptr = mmap(ptr, size, prot, flags, fd, map_offset);
     }
 
+#if 1
     /* TODO: This hardcodes the three DIMM logic. */
     if (dimm_counter == 0) {
         log_always("\n");
@@ -320,7 +321,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
     } else if (dimm_counter == 2) {
         log_always("========DIMM3========\n");
         if(qemu_map_flags & QEMU_MAP_SHARED){
-            size_t length = size - 4*1024*1024*1024ULL; // total_size - 5GB
+            size_t length = size; 
             log_always("[native] %p -- %p\n", 
             activated_ptr, 
             (void *)((uintptr_t)activated_ptr + length));
@@ -349,6 +350,7 @@ static void *mmap_activate(void *ptr, size_t size, int fd,
         log_always("========BACKEND-SETUP\n\n");
         dimm_counter++;
     }
+#endif
 
     g_free(proc_link);
     g_free(file_name);
