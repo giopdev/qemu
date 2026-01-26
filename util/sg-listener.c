@@ -778,10 +778,10 @@ extern void* mmap_listener(void* arg) {
                 break;
 
             case FCNTL:
-                log_sg("fcntl() is called");
+                log_sg("fcntl(%d)\n", c->p1);
                 ret = fcntl(c->p1, c->p2, c->p3);
                 c->ret = ret;
-                log_sg("fcntl() returned: %d", ret);
+                log_sg("fcntl() returned: %d\n", ret);
                 __sync_synchronize();
                 c->req_bit = 0;
                 break;
@@ -814,10 +814,10 @@ extern void* mmap_listener(void* arg) {
                 break;
 
             case DUP:
-                log_sg("dup() is called");
+                log_sg("dup(%d)\n", c->p1);
                 ret = dup(c->p1);
                 c->ret = ret;
-                log_sg("dup() returned: %d", ret);
+                log_sg("dup() returned: %d\n", ret);
                 __sync_synchronize();
                 c->req_bit = 0;
                 break;
