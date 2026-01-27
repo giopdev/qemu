@@ -16,7 +16,7 @@
 
 /* Uncomment to enable debugging */
 // #define COMMAND_DEBUG
-// #define GEM_DEBUG
+#define GEM_DEBUG
 // #define STAT_DEBUG
 
 /* Syscall logging toggle */
@@ -128,6 +128,7 @@ static const  size_t PAGE_SIZE    = 4*1024;
 
 // static void* DATA_REGION = (void*)0x100008000ULL;
 static void* DATA_REGION = (void*)0x100000000ULL;
+static void* HUGEPAGE_DATA_REGION = (void*)0x200000000ULL;
 static void* DATA_HOST_OFFSET = (void*)0x80000000ULL;
 
 // This is different than where it appears in the guest.
