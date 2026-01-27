@@ -15,9 +15,9 @@
 #include <xcb/sync.h>
 
 /* Uncomment to enable debugging */
-#define COMMAND_DEBUG
+// #define COMMAND_DEBUG
 // #define GEM_DEBUG
-#define STAT_DEBUG
+// #define STAT_DEBUG
 
 /* Syscall logging toggle */
 extern int syscall_logging_enabled;
@@ -90,6 +90,7 @@ typedef struct buffer {
         xcb_pixmap_t pixmap;
         EGLImageKHR image;
         GLuint tex;
+        GLuint fbo;
         int shm_fence_fd;
         struct xshmfence *shm_fence;
         xcb_sync_fence_t sync_fence;

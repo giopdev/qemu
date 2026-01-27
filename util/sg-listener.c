@@ -58,6 +58,7 @@ static size_t ioctl_stats_used = 0;
 static uint64_t execbuffer2_last_flags = 0;
 static uint32_t syncobj_wait_last_flags = 0;
 
+#ifdef STAT_DEBUG
 static void print_syncobj_wait_flags(FILE *out, uint32_t flags) {
   if (flags == 0) {
     fprintf(out, "NONE\n");
@@ -65,13 +66,18 @@ static void print_syncobj_wait_flags(FILE *out, uint32_t flags) {
   }
 
   bool first = true;
-#define PRINT_SYNCOBJ_FLAG(flag)                                            \
-  do {                                                                       \
-    if (flags & (flag)) {                                                    \
-      fprintf(out, "%s%s", first ? "" : "|", #flag);                    \
-      first = false;                                                         \
-    }                                                                        \
-  } while (0)
+  #ifdef STAT_DEBUG
+    #define PRINT_SYNCOBJ_FLAG(flag)                                            \
+    do {                                                                       \
+      if (flags & (flag)) {                                                    \
+        fprintf(out, "%s%s", first ? "" : "|", #flag);                    \
+        first = false;                                                         \
+      }                                                                        \
+    } while (0)
+  #else 
+    #define PRINT_SYNCOBJ_FLAG(flag)                                            \
+    do {} while (0)
+  #endif
 
   PRINT_SYNCOBJ_FLAG(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL);
   PRINT_SYNCOBJ_FLAG(DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT);
@@ -83,7 +89,11 @@ static void print_syncobj_wait_flags(FILE *out, uint32_t flags) {
 
 #undef PRINT_SYNCOBJ_FLAG
 }
+#else
+static void print_syncobj_wait_flags(FILE *out, uint32_t flags) {}
+#endif
 
+#ifdef STAT_DEBUG
 static void print_execbuffer2_flags(uint64_t flags) {
     if (flags == 0) {
         fprintf(stderr, "NONE");
@@ -91,13 +101,19 @@ static void print_execbuffer2_flags(uint64_t flags) {
     }
 
     bool first = true;
-    #define PRINT_FLAG(flag)                                                     \
-    do {                                                                       \
-        if (flags & (flag)) {                                                    \
-        fprintf(stderr, "%s%s", first ? "" : "|", #flag);                            \
-        first = false;                                                         \
-        }                                                                        \
-    } while (0)
+  
+    #ifdef STAT_DEBUG
+      #define PRINT_FLAG(flag)                                                     \
+      do {                                                                        \
+          if (flags & (flag)) {                                                    \
+          fprintf(stderr, "%s%s", first ? "" : "|", #flag);                            \
+          first = false;                                                         \
+          } \
+      } while (0)
+    #else 
+      #define PRINT_FLAG(flag)                                                     \
+      do {} while (0) 
+    #endif
 
     PRINT_FLAG(I915_EXEC_RING_MASK);
     PRINT_FLAG(I915_EXEC_DEFAULT);
@@ -132,6 +148,9 @@ static void print_execbuffer2_flags(uint64_t flags) {
 
 #undef PRINT_FLAG
 }
+#else 
+static void print_execbuffer2_flags(uint64_t flags) {}
+#endif 
 
 static const char *i915_ioctl_name(unsigned long request) {
   switch (request) {
