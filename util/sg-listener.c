@@ -772,6 +772,8 @@ extern void* mmap_listener(void* arg) {
 
                 c->ret = ret;
                 __sync_synchronize();
+
+                log_sg("[syscall] ioctl(fd=%d, req=0x%lx) = %d\n", c->p1, (void*) c->p2, ret);
                 c->req_bit = 0;
                 break;
             }
